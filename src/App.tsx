@@ -1,5 +1,6 @@
 import React, {useCallback, useEffect, useState} from 'react';
 import {AnimatePresence} from 'motion/react';
+import {onAuthStateChanged, signOut} from 'firebase/auth';
 import {CartItem, CurrencyCode, GameCategory, Product} from './types';
 import {IntroLoader} from './components/IntroLoader';
 import {Navbar} from './components/Navbar';
@@ -9,11 +10,14 @@ import {CartDrawer} from './components/CartDrawer';
 import {AdminLoginModal} from './components/AdminLoginModal';
 import {AdminDrawer} from './components/AdminDrawer';
 import {MusicPlayerButton} from './components/MusicPlayerButton';
+import {auth} from './firebase';
 import {
-  clearCatalogOverrides,
-  loadCatalogState,
-  saveCatalogOverrides,
-} from './utils/catalogStorage';
+  checkIsAdminUser,
+  clearLocalCatalogOverrides,
+  loadLocalCatalogState,
+  saveLocalCatalogOverrides,
+  subscribeToCatalog,
+} from './utils/catalogCloud';
 
 const CART_STORAGE_KEY = 'kitty_shop_cart_v1';
 const ADMIN_SESSION_KEY = 'kitty_shop_admin_auth_v1';
@@ -23,10 +27,10 @@ export default function App() {
   const [showIntro, setShowIntro] = useState(true);
   const [activeGame, setActiveGame] = useState<GameCategory | null>(null);
 
-  const [initialCatalogState] = useState(() => loadCatalogState());
-  const [products, setProducts] = useState<Product[]>(initialCatalogState.products);
+  const [initialLocalState] = useState(() => loadLocalCatalogState());
+  const [products, setProducts] = useState<Product[]>(initialLocalState.products);
   const [hasLocalOverrides, setHasLocalOverrides] = useState<boolean>(
-    initialCatalogState.hasLocalOverrides,
+    initialLocalState.hasLocalOverrides,
   );
 
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -71,12 +75,37 @@ export default function App() {
       return false;
     }
   });
+  const [isCloudAdmin, setIsCloudAdmin] = useState(false);
 
   const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
   const [isAdminDrawerOpen, setIsAdminDrawerOpen] = useState(false);
   const [adminInitialGame, setAdminInitialGame] = useState<GameCategory>('adopt-me');
 
-  // Persist cart to localStorage
+  // Track optional Firebase Auth admin state
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      if (!user || !user.emailVerified) {
+        setIsCloudAdmin(false);
+        return;
+      }
+      const allowed = await checkIsAdminUser(user.uid, user.email);
+      setIsCloudAdmin(allowed);
+    });
+    return () => unsubscribeAuth();
+  }, []);
+
+  // Sync live Firestore updates when cloud catalog is initialized and no local edits override it
+  useEffect(() => {
+    if (hasLocalOverrides) return;
+    const unsubscribeCatalog = subscribeToCatalog((liveProducts, isInitialized) => {
+      if (isInitialized) {
+        setProducts(liveProducts);
+      }
+    });
+    return () => unsubscribeCatalog();
+  }, [hasLocalOverrides]);
+
+  // Persist user's cart to localStorage
   useEffect(() => {
     try {
       localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
@@ -174,24 +203,30 @@ export default function App() {
     setIsAdminDrawerOpen(true);
   };
 
-  const handleAdminLogout = () => {
+  const handleAdminLogout = async () => {
     setIsAdmin(false);
+    setIsCloudAdmin(false);
     try {
       sessionStorage.removeItem(ADMIN_SESSION_KEY);
     } catch {
       // Ignore storage error
     }
+    try {
+      await signOut(auth);
+    } catch {
+      // Ignore signout error
+    }
     setIsAdminDrawerOpen(false);
   };
 
   const handleCatalogUpdated = (nextProducts: Product[]) => {
-    saveCatalogOverrides(nextProducts);
+    saveLocalCatalogOverrides(nextProducts);
     setProducts(nextProducts);
     setHasLocalOverrides(true);
   };
 
   const handleResetCatalog = () => {
-    const initial = clearCatalogOverrides();
+    const initial = clearLocalCatalogOverrides();
     setProducts(initial);
     setHasLocalOverrides(false);
   };
@@ -199,7 +234,7 @@ export default function App() {
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   return (
-    <div className="min-h-screen flex flex-col bg-transparent text-[#FFF8F3]">
+    <div className="min-h-screen flex flex-col bg-transparent text-[#FFF8F3] overflow-x-hidden">
       <AnimatePresence>
         {showIntro && <IntroLoader onComplete={handleIntroComplete} />}
       </AnimatePresence>
@@ -213,7 +248,7 @@ export default function App() {
         onOpenAdmin={handleOpenAdmin}
       />
 
-      <main className="flex-1">
+      <main className="flex-1 w-full">
         {activeGame === null ? (
           <GameSelector onSelectGame={setActiveGame} />
         ) : (
@@ -223,6 +258,7 @@ export default function App() {
             cart={cart}
             currency={currency}
             isAdmin={isAdmin}
+            isLoadingProducts={false}
             onSelectGame={setActiveGame}
             onChangeCurrency={setCurrency}
             onAddToCart={handleAddToCart}
@@ -231,8 +267,8 @@ export default function App() {
         )}
       </main>
 
-      <footer className="border-t border-white/10 py-6 px-4 sm:px-6 bg-[#261710]/75 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-[#DECAC0]">
+      <footer className="border-t border-white/10 py-6 px-4 sm:px-6 lg:px-8 bg-[#261710]/75 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-[#DECAC0]">
           <span className="font-serif text-sm font-semibold tracking-[0.1em] text-[#FFF8F3]">
             KITTY SHOP
           </span>
@@ -280,8 +316,10 @@ export default function App() {
         currency={currency}
         products={products}
         hasLocalOverrides={hasLocalOverrides}
+        isCloudAdmin={isCloudAdmin}
         onCatalogUpdated={handleCatalogUpdated}
         onResetCatalog={handleResetCatalog}
+        onCloudStatusChange={setIsCloudAdmin}
         onLogout={handleAdminLogout}
       />
 

@@ -83,7 +83,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           <p className="mt-1 text-xs text-[#7D7478] line-clamp-1">{product.subtitle}</p>
         )}
 
-        <div className="mt-auto pt-4 flex items-center justify-between gap-3 border-t border-black/[0.06]">
+        <div className="mt-auto pt-4 flex flex-wrap items-center justify-between gap-2.5 border-t border-black/[0.06]">
           {isSoldInCurrency ? (
             <span className="text-base font-semibold text-[#181617] tabular-nums whitespace-nowrap">
               {formatAmount(priceInCurrency, currency)}

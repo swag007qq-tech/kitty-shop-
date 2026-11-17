@@ -11,6 +11,7 @@ interface CatalogViewProps {
   cart: CartItem[];
   currency: CurrencyCode;
   isAdmin: boolean;
+  isLoadingProducts: boolean;
   onSelectGame: (game: GameCategory | null) => void;
   onChangeCurrency: (currency: CurrencyCode) => void;
   onAddToCart: (product: Product) => void;
@@ -23,6 +24,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   cart,
   currency,
   isAdmin,
+  isLoadingProducts,
   onSelectGame,
   onChangeCurrency,
   onAddToCart,
@@ -69,26 +71,26 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
       initial={{opacity: 0, y: 10}}
       animate={{opacity: 1, y: 0}}
       transition={{duration: 0.35, ease: [0.16, 1, 0.3, 1]}}
-      className="max-w-6xl mx-auto px-4 sm:px-6 py-10 sm:py-12"
+      className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-8 sm:py-10 lg:py-12"
     >
       {/* Top Breadcrumb + Switcher */}
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-7 border-b border-white/12">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-6 sm:pb-7 border-b border-white/12">
         <div>
           <button
             type="button"
             onClick={() => onSelectGame(null)}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-[#DECAC0] hover:text-[#FFF8F3] transition-colors mb-2.5"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-[#DECAC0] hover:text-[#FFF8F3] transition-colors mb-2"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>К выбору игры</span>
           </button>
 
-          <h1 className="font-serif text-4xl sm:text-5xl font-semibold text-[#FFF8F3] tracking-tight">
+          <h1 className="font-serif text-3xl sm:text-4xl lg:text-5xl font-semibold text-[#FFF8F3] tracking-tight">
             {gameTitle}
           </h1>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
           {/* Segmented Game Switcher */}
           <div
             className="inline-flex items-center p-1 bg-[#261710]/85 rounded-xl border border-white/12"
@@ -100,7 +102,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               role="tab"
               aria-selected={game === 'adopt-me'}
               onClick={() => onSelectGame('adopt-me')}
-              className={`px-4 py-2 text-xs font-medium rounded-lg transition-all duration-150 whitespace-nowrap shrink-0 ${
+              className={`px-3.5 sm:px-4 py-2 text-xs font-medium rounded-lg transition-all duration-150 whitespace-nowrap shrink-0 ${
                 game === 'adopt-me'
                   ? 'bg-[#FFF8F3] text-[#261710] shadow-xs'
                   : 'text-[#DECAC0] hover:text-[#FFF8F3]'
@@ -113,7 +115,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               role="tab"
               aria-selected={game === 'mm2'}
               onClick={() => onSelectGame('mm2')}
-              className={`px-4 py-2 text-xs font-medium rounded-lg transition-all duration-150 whitespace-nowrap shrink-0 ${
+              className={`px-3.5 sm:px-4 py-2 text-xs font-medium rounded-lg transition-all duration-150 whitespace-nowrap shrink-0 ${
                 game === 'mm2'
                   ? 'bg-[#FFF8F3] text-[#261710] shadow-xs'
                   : 'text-[#DECAC0] hover:text-[#FFF8F3]'
@@ -127,7 +129,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             <button
               type="button"
               onClick={() => onOpenAdminForGame(game)}
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium text-[#7D2443] bg-[#F9E4EC] border border-[#F3C5D2] rounded-xl hover:bg-[#F4D5E1] transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 text-xs font-medium text-[#7D2443] bg-[#F9E4EC] border border-[#F3C5D2] rounded-xl hover:bg-[#F4D5E1] transition-colors whitespace-nowrap shrink-0"
             >
               <SlidersHorizontal className="w-3.5 h-3.5" />
               <span>Управлять {gameTitle}</span>
@@ -137,10 +139,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
       </div>
 
       {/* Search, Budget, Stock & Currency Toolbar */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3.5 py-6">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 py-5 sm:py-6">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1 min-w-0">
           {/* Search */}
-          <div className="relative flex-1 max-w-xs">
+          <div className="relative w-full sm:flex-1 sm:max-w-xs">
             <Search className="w-4 h-4 text-[#8C7B72] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
@@ -152,7 +154,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           </div>
 
           {/* Budget Filter */}
-          <div className="relative flex items-center bg-[#FFFDFB] border border-white/20 rounded-xl px-3 py-2 focus-within:border-[#F3C5D2] transition-colors sm:w-52">
+          <div className="relative flex items-center bg-[#FFFDFB] border border-white/20 rounded-xl px-3 py-2 focus-within:border-[#F3C5D2] transition-colors w-full sm:w-52">
             <span className="text-xs font-medium text-[#7D7478] whitespace-nowrap mr-2">
               Бюджет до:
             </span>
@@ -164,7 +166,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               onChange={(e) => setMaxBudget(e.target.value)}
               placeholder="Любой"
               aria-label={`Максимальный бюджет в валюте ${activeCurrency.label}`}
-              className="w-full text-sm bg-transparent text-[#181617] placeholder:text-[#A3989D] tabular-nums focus:outline-none"
+              className="w-full min-w-0 text-sm bg-transparent text-[#181617] placeholder:text-[#A3989D] tabular-nums focus:outline-none"
             />
             <span className="text-xs font-medium text-[#5D5357] ml-1.5 whitespace-nowrap">
               {activeCurrency.shortLabel}
@@ -182,10 +184,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2.5 sm:gap-3">
           {/* Currency Selector */}
           <div
-            className="inline-flex items-center p-1 bg-[#261710]/85 rounded-xl border border-white/12"
+            className="grid grid-cols-3 sm:inline-flex items-center p-1 bg-[#261710]/85 rounded-xl border border-white/12"
             role="group"
             aria-label="Выбор валюты"
           >
@@ -194,7 +196,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                 key={item.code}
                 type="button"
                 onClick={() => onChangeCurrency(item.code)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                className={`px-2.5 sm:px-3 py-2 sm:py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap text-center ${
                   currency === item.code
                     ? 'bg-[#FFF8F3] text-[#261710] shadow-xs'
                     : 'text-[#DECAC0] hover:text-[#FFF8F3]'
@@ -206,11 +208,11 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           </div>
 
           {/* Stock Toggle */}
-          <div className="inline-flex items-center gap-1 p-1 bg-[#261710]/85 rounded-xl border border-white/12">
+          <div className="grid grid-cols-2 sm:inline-flex items-center gap-1 p-1 bg-[#261710]/85 rounded-xl border border-white/12">
             <button
               type="button"
               onClick={() => setStockFilter('all')}
-              className={`px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+              className={`px-3.5 py-2 sm:py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap text-center ${
                 stockFilter === 'all'
                   ? 'bg-[#FFF8F3] text-[#261710] shadow-xs'
                   : 'text-[#DECAC0] hover:text-[#FFF8F3]'
@@ -221,7 +223,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             <button
               type="button"
               onClick={() => setStockFilter('in-stock')}
-              className={`px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+              className={`px-3.5 py-2 sm:py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap text-center ${
                 stockFilter === 'in-stock'
                   ? 'bg-[#FFF8F3] text-[#261710] shadow-xs'
                   : 'text-[#DECAC0] hover:text-[#FFF8F3]'
@@ -234,8 +236,17 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
       </div>
 
       {/* Product Grid */}
-      {gameProducts.length === 0 ? (
-        <div className="py-16 px-6 text-center bg-[#FFFDFB] border border-white/20 rounded-2xl shadow-[0_20px_40px_-20px_rgba(0,0,0,0.45)]">
+      {isLoadingProducts && products.length === 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6">
+          {[0, 1, 2, 3].map((idx) => (
+            <div
+              key={idx}
+              className="h-44 rounded-2xl bg-white/10 border border-white/20 animate-pulse"
+            />
+          ))}
+        </div>
+      ) : gameProducts.length === 0 ? (
+        <div className="py-14 sm:py-16 px-5 sm:px-6 text-center bg-[#FFFDFB] border-2 border-white rounded-2xl shadow-[0_0_24px_rgba(255,255,255,0.22)]">
           <p className="font-serif text-2xl font-semibold text-[#181617]">
             Товары не найдены
           </p>
@@ -259,7 +270,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-7">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6">
           {gameProducts.map((product) => {
             const cartEntry = cart.find((c) => c.productId === product.id);
             return (

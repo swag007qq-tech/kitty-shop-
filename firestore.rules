@@ -1,0 +1,176 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'swag007qq@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin()
+        || (
+          isSignedIn()
+          && request.auth.token.email_verified == true
+          && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        );
+    }
+
+    function isValidPrices(prices) {
+      return prices is map
+        && prices.keys().size() >= 1
+        && prices.keys().size() <= 3
+        && prices.keys().hasOnly(['UAH', 'STARS', 'ROBUX'])
+        && (!('UAH' in prices) || (prices.UAH is int && prices.UAH >= 0 && prices.UAH <= 100000000))
+        && (!('STARS' in prices) || (prices.STARS is int && prices.STARS >= 0 && prices.STARS <= 100000000))
+        && (!('ROBUX' in prices) || (prices.ROBUX is int && prices.ROBUX >= 0 && prices.ROBUX <= 100000000));
+    }
+
+    function isValidRarities(rarities) {
+      return rarities is list
+        && rarities.size() >= 1
+        && rarities.size() <= 4
+        && rarities[0] is string
+        && rarities.hasOnly(['M', 'N', 'F', 'R']);
+    }
+
+    function isValidProduct(data, productId) {
+      return data.keys().hasAll(['id', 'game', 'title', 'prices', 'stock', 'imageUrl', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'game', 'title', 'subtitle', 'rarities', 'prices', 'stock', 'imageUrl', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.id == productId
+        && data.game in ['adopt-me', 'mm2']
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 140
+        && data.stock is int
+        && data.stock >= 0
+        && data.stock <= 100000
+        && data.imageUrl is string
+        && data.imageUrl.size() <= 2048
+        && isValidPrices(data.prices)
+        && (
+          (data.game == 'adopt-me' && ('rarities' in data) && isValidRarities(data.rarities) && !('subtitle' in data))
+          || (data.game == 'mm2' && !('rarities' in data) && (!('subtitle' in data) || (data.subtitle is string && data.subtitle.size() <= 200)))
+        )
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidProductImage(data, imageId) {
+      return data.keys().hasAll(['id', 'dataUrl', 'mimeType', 'createdAt'])
+        && data.keys().hasOnly(['id', 'dataUrl', 'mimeType', 'createdAt'])
+        && isValidId(data.id)
+        && data.id == imageId
+        && data.dataUrl is string
+        && data.dataUrl.size() >= 1
+        && data.dataUrl.size() <= 800000
+        && data.mimeType is string
+        && data.mimeType.size() >= 1
+        && data.mimeType.size() <= 64
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCatalogMeta(data) {
+      return data.keys().hasAll(['initialized', 'updatedAt'])
+        && data.keys().hasOnly(['initialized', 'updatedAt'])
+        && data.initialized is bool
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminUser(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'createdAt'])
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 254
+        && data.createdAt is timestamp;
+    }
+
+    // Storefront products: public read (no PII), strict admin-only writes
+    match /products/{productId} {
+      allow get: if isValidId(productId);
+      allow list: if true;
+
+      allow create: if isAdmin()
+        && isValidId(productId)
+        && isValidProduct(incoming(), productId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isAdmin()
+        && isValidId(productId)
+        && isValidProduct(incoming(), productId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['game', 'title', 'subtitle', 'rarities', 'prices', 'stock', 'imageUrl', 'updatedAt']);
+
+      allow delete: if isAdmin() && isValidId(productId);
+    }
+
+    // Cloud product images fallback: public read (no PII), strict admin-only writes
+    match /product_images/{imageId} {
+      allow get: if isValidId(imageId);
+      allow list: if false;
+
+      allow create: if isAdmin()
+        && isValidId(imageId)
+        && isValidProductImage(incoming(), imageId)
+        && incoming().createdAt == request.time;
+
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(imageId);
+    }
+
+    // Catalog initialization state flag: public get, admin-only write
+    match /catalog_meta/{metaId} {
+      allow get: if metaId == 'state';
+      allow list: if false;
+
+      allow create, update: if isAdmin()
+        && metaId == 'state'
+        && isValidCatalogMeta(incoming())
+        && incoming().updatedAt == request.time;
+
+      allow delete: if false;
+    }
+
+    // Admin allowlist: readable by self or bootstrapped admin, writable only by bootstrapped admin
+    match /admins/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isBootstrappedAdmin());
+      allow list: if false;
+
+      allow create: if isBootstrappedAdmin()
+        && isValidId(userId)
+        && isValidAdminUser(incoming(), userId)
+        && incoming().createdAt == request.time;
+
+      allow update: if false;
+      allow delete: if isBootstrappedAdmin() && isValidId(userId);
+    }
+  }
+}

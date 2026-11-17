@@ -129,7 +129,7 @@ export const MusicPlayerButton: React.FC = () => {
   const progressPct = Math.min(100, (elapsedSec / TRACK_DURATION_SEC) * 100);
 
   return (
-    <div ref={containerRef} className="fixed bottom-5 right-5 z-30">
+    <div ref={containerRef} className="fixed bottom-3 right-3 sm:bottom-5 sm:right-5 z-30">
       <AnimatePresence>
         {isOpen && (
           <motion.div
@@ -137,7 +137,7 @@ export const MusicPlayerButton: React.FC = () => {
             animate={{opacity: 1, y: 0, scale: 1}}
             exit={{opacity: 0, y: 10, scale: 0.94}}
             transition={{duration: 0.24, ease: [0.16, 1, 0.3, 1]}}
-            className="absolute bottom-15 right-0 w-[320px] sm:w-[348px] bg-white border-[2.5px] border-[#181617] rounded-3xl shadow-[0_0_32px_rgba(255,255,255,0.45),6px_6px_0px_#181617] overflow-hidden text-[#181617]"
+            className="absolute bottom-14 right-0 w-[calc(100vw-1.5rem)] max-w-[348px] bg-white border-[2.5px] border-[#181617] rounded-3xl shadow-[0_0_32px_rgba(255,255,255,0.45),6px_6px_0px_#181617] overflow-hidden text-[#181617]"
           >
             {/* Top Sketch Header: Heart — MUSIC — ••• */}
             <div className="px-5 pt-4 pb-2 flex items-center justify-between">

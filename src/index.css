@@ -12,6 +12,8 @@
     background-color: #352218;
     color: #fff8f3;
     scroll-behavior: smooth;
+    overflow-x: hidden;
+    max-width: 100%;
   }
 
   body {
@@ -23,6 +25,7 @@
     background-repeat: no-repeat;
     color: #fff8f3;
     overflow-x: hidden;
+    max-width: 100%;
   }
 
   button,

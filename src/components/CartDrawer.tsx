@@ -101,7 +101,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             className="relative z-10 w-full max-w-md bg-white h-full flex flex-col border-l border-black/[0.08] shadow-2xl"
           >
             {/* Header */}
-            <div className="px-6 py-5 border-b border-black/[0.06] flex items-center justify-between">
+            <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-black/[0.06] flex items-center justify-between">
               <div>
                 <h2 className="font-serif text-2xl font-semibold text-[#181617]">
                   Корзина
@@ -121,7 +121,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             </div>
 
             {/* Currency Switcher inside Cart */}
-            <div className="px-6 py-3 bg-[#FAF8F9] border-b border-black/[0.06] flex items-center justify-between gap-2">
+            <div className="px-4 sm:px-6 py-3 bg-[#FAF8F9] border-b border-black/[0.06] flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs text-[#6E676B]">Валюта:</span>
               <div className="inline-flex items-center gap-1 p-0.5 bg-white border border-black/[0.07] rounded-lg">
                 {CURRENCY_LIST.map((item) => (
@@ -129,7 +129,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     key={item.code}
                     type="button"
                     onClick={() => onChangeCurrency(item.code)}
-                    className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors whitespace-nowrap ${
+                    className={`px-2 sm:px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors whitespace-nowrap ${
                       currency === item.code
                         ? 'bg-[#181617] text-white'
                         : 'text-[#6E676B] hover:text-[#181617]'

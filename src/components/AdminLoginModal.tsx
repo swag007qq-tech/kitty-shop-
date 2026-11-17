@@ -1,8 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
 import {X, Eye, EyeOff, Lock} from 'lucide-react';
-
-import {ADMIN_PASSWORD} from '../utils/catalogStorage';
+import {ADMIN_PASSWORD} from '../utils/catalogCloud';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -69,7 +68,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
             exit={{opacity: 0}}
             transition={{duration: 0.2}}
             onClick={onClose}
-            className="fixed inset-0 bg-black/30 backdrop-blur-[1px]"
+            className="fixed inset-0 bg-black/35 backdrop-blur-[1px]"
           />
 
           <motion.div
@@ -77,7 +76,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
             animate={{opacity: 1, scale: 1, y: 0}}
             exit={{opacity: 0, scale: 0.96, y: 8}}
             transition={{duration: 0.22, ease: [0.16, 1, 0.3, 1]}}
-            className="relative z-10 w-full max-w-sm bg-white border border-black/[0.08] rounded-2xl p-6 shadow-2xl"
+            className="relative z-10 w-full max-w-sm bg-white border border-black/[0.08] rounded-2xl p-5 sm:p-6 shadow-2xl"
           >
             <div className="flex items-start justify-between gap-3 mb-5">
               <div>
@@ -87,7 +86,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 <h2 className="font-serif text-2xl font-semibold text-[#181617]">
                   Вход для администратора
                 </h2>
-                <p className="mt-1 text-xs text-[#6E676B]">
+                <p className="mt-1 text-xs text-[#6E676B] leading-relaxed">
                   Введите пароль для управления каталогами Adopt Me и MM2.
                 </p>
               </div>
@@ -95,7 +94,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 type="button"
                 onClick={onClose}
                 aria-label="Закрыть окно входа"
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-[#7D7478] hover:text-[#181617] hover:bg-[#FAF8F9] transition-colors"
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-[#7D7478] hover:text-[#181617] hover:bg-[#FAF8F9] transition-colors shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -140,7 +139,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 </p>
               )}
 
-              <div className="flex items-center gap-2.5 pt-1">
+              <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={onClose}

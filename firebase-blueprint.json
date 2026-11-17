@@ -1,0 +1,155 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Catalog item for Adopt Me or MM2 storefront",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique product identifier",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "game": {
+          "type": "string",
+          "description": "Game catalog identifier",
+          "enum": ["adopt-me", "mm2"]
+        },
+        "title": {
+          "type": "string",
+          "description": "Display title of the item",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "subtitle": {
+          "type": "string",
+          "description": "Optional short description for MM2 items",
+          "maxLength": 200
+        },
+        "rarities": {
+          "type": "array",
+          "description": "Adopt Me rarity badges (M, N, F, R)"
+        },
+        "prices": {
+          "type": "object",
+          "description": "Manual prices per currency code (UAH, STARS, ROBUX)"
+        },
+        "stock": {
+          "type": "integer",
+          "description": "Available quantity in stock"
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Cloud photo URL or firestore-img reference",
+          "maxLength": 2048
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": ["id", "game", "title", "prices", "stock", "imageUrl", "createdAt", "updatedAt"]
+    },
+    "ProductImage": {
+      "title": "ProductImage",
+      "description": "Cloud-stored compressed product thumbnail fallback",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique image identifier",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "dataUrl": {
+          "type": "string",
+          "description": "Compressed WebP/JPEG data URI",
+          "minLength": 1,
+          "maxLength": 800000
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "Image MIME type",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server upload timestamp"
+        }
+      },
+      "required": ["id", "dataUrl", "mimeType", "createdAt"]
+    },
+    "CatalogMeta": {
+      "title": "CatalogMeta",
+      "description": "Catalog initialization metadata",
+      "type": "object",
+      "properties": {
+        "initialized": {
+          "type": "boolean",
+          "description": "Whether initial catalog seed has been committed"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last metadata update timestamp"
+        }
+      },
+      "required": ["initialized", "updatedAt"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized admin user record",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "email": {
+          "type": "string",
+          "description": "Verified admin email",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        }
+      },
+      "required": ["uid", "email", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Publicly readable, admin-writable storefront products for Adopt Me and MM2"
+    },
+    "/product_images/{imageId}": {
+      "schema": { "$ref": "#/entities/ProductImage" },
+      "description": "Publicly readable, admin-writable cloud product images"
+    },
+    "/catalog_meta/{metaId}": {
+      "schema": { "$ref": "#/entities/CatalogMeta" },
+      "description": "Catalog initialization state flag"
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Admin role allowlist documents"
+    }
+  }
+}

@@ -11,7 +11,9 @@ import {
   Check,
   Download,
   RotateCcw,
+  Cloud,
 } from 'lucide-react';
+import {signInWithPopup, signOut} from 'firebase/auth';
 import {
   AdoptMeRarity,
   CurrencyCode,
@@ -27,10 +29,18 @@ import {
   getProductPrice,
 } from '../utils/currency';
 import {ADOPT_ME_RARITIES, getRarityMeta, sortRarities} from '../utils/rarities';
+import {auth, BOOTSTRAPPED_ADMIN_EMAIL, googleProvider} from '../firebase';
 import {
+  checkIsAdminUser,
+  createProductInCloud,
+  deleteProductInCloud,
   downloadCatalogJson,
+  ensureCloudCatalogSeeded,
   readImageAsDataUrl,
-} from '../utils/catalogStorage';
+  updateProductInCloud,
+  updateStockInCloud,
+  uploadProductPhotoToCloud,
+} from '../utils/catalogCloud';
 
 interface AdminDrawerProps {
   isOpen: boolean;
@@ -39,8 +49,10 @@ interface AdminDrawerProps {
   currency: CurrencyCode;
   products: Product[];
   hasLocalOverrides: boolean;
+  isCloudAdmin: boolean;
   onCatalogUpdated: (nextProducts: Product[]) => void;
   onResetCatalog: () => void;
+  onCloudStatusChange: (isConnected: boolean) => void;
   onLogout: () => void;
 }
 
@@ -78,14 +90,18 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
   initialGame,
   products,
   hasLocalOverrides,
+  isCloudAdmin,
   onCatalogUpdated,
   onResetCatalog,
+  onCloudStatusChange,
   onLogout,
 }) => {
   const [managedGame, setManagedGame] = useState<GameCategory>(initialGame);
   const [form, setForm] = useState<FormState>(() => EMPTY_FORM(initialGame));
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isConnectingCloud, setIsConnectingCloud] = useState(false);
   const [error, setError] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -177,6 +193,30 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
     }));
   };
 
+  const handleConnectCloudSync = async () => {
+    setIsConnectingCloud(true);
+    setError('');
+    setStatusMessage('');
+    try {
+      const cred = await signInWithPopup(auth, googleProvider);
+      const allowed = await checkIsAdminUser(cred.user.uid, cred.user.email);
+      if (!allowed || !cred.user.emailVerified) {
+        await signOut(auth);
+        setError(
+          `Этот Google-аккаунт не имеет прав администратора (${BOOTSTRAPPED_ADMIN_EMAIL}).`,
+        );
+        return;
+      }
+      await ensureCloudCatalogSeeded(products);
+      onCloudStatusChange(true);
+      setStatusMessage('Облачная синхронизация Firebase подключена!');
+    } catch {
+      setError('Не удалось подключить облачную синхронизацию Firebase.');
+    } finally {
+      setIsConnectingCloud(false);
+    }
+  };
+
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -190,8 +230,10 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
     setError('');
 
     try {
-      const dataUrl = await readImageAsDataUrl(file);
-      setForm((prev) => ({...prev, imageUrl: dataUrl}));
+      const url = isCloudAdmin
+        ? await uploadProductPhotoToCloud(file)
+        : await readImageAsDataUrl(file);
+      setForm((prev) => ({...prev, imageUrl: url}));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ошибка обработки изображения');
     } finally {
@@ -202,18 +244,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
     }
   };
 
-  const persistUpdate = (nextList: Product[], message: string) => {
-    try {
-      onCatalogUpdated(nextList);
-      setStatusMessage(message);
-      return true;
-    } catch {
-      setError('Не удалось сохранить в localStorage (превышен лимит памяти браузера — используйте ссылку вместо большого фото).');
-      return false;
-    }
-  };
-
-  const handleSaveProduct = (e: React.FormEvent) => {
+  const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setStatusMessage('');
@@ -252,59 +283,112 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
       return;
     }
 
-    const now = new Date().toISOString();
-    const isEdit = Boolean(form.id);
-    const existing = isEdit ? products.find((p) => p.id === form.id) : undefined;
-
-    const savedProduct: Product = {
-      id:
+    setIsSaving(true);
+    try {
+      const now = new Date().toISOString();
+      const isEdit = Boolean(form.id);
+      const existing = isEdit ? products.find((p) => p.id === form.id) : undefined;
+      const productId =
         existing?.id ||
-        `${form.game}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      game: form.game,
-      title: form.title.trim(),
-      subtitle: form.game === 'mm2' ? form.subtitle.trim() || undefined : undefined,
-      rarities: form.game === 'adopt-me' ? sortRarities(form.rarities) : undefined,
-      prices: parsedPrices,
-      stock: Math.floor(stockNum),
-      imageUrl: form.imageUrl.trim(),
-      createdAt: existing?.createdAt || now,
-      updatedAt: now,
-    };
+        `${form.game}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-    const nextList = isEdit
-      ? products.map((p) => (p.id === savedProduct.id ? savedProduct : p))
-      : [savedProduct, ...products];
+      const savedProduct: Product = {
+        id: productId,
+        game: form.game,
+        title: form.title.trim(),
+        subtitle: form.game === 'mm2' ? form.subtitle.trim() || undefined : undefined,
+        rarities: form.game === 'adopt-me' ? sortRarities(form.rarities) : undefined,
+        prices: parsedPrices,
+        stock: Math.floor(stockNum),
+        imageUrl: form.imageUrl.trim(),
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+      };
 
-    const saved = persistUpdate(
-      nextList,
-      isEdit
-        ? 'Товар обновлён и сохранён в localStorage'
-        : 'Товар добавлен и сохранён в localStorage',
-    );
-    if (!saved) return;
+      const nextList = isEdit
+        ? products.map((p) => (p.id === savedProduct.id ? savedProduct : p))
+        : [savedProduct, ...products];
 
-    setManagedGame(savedProduct.game);
-    setIsFormVisible(false);
-    setForm(EMPTY_FORM(savedProduct.game));
+      try {
+        onCatalogUpdated(nextList);
+      } catch {
+        setError(
+          'Не удалось сохранить в localStorage (превышен лимит памяти браузера — используйте ссылку на фото).',
+        );
+        setIsSaving(false);
+        return;
+      }
+
+      if (isCloudAdmin) {
+        const cloudPayload = {
+          id: productId,
+          game: form.game,
+          title: savedProduct.title,
+          subtitle: savedProduct.subtitle,
+          rarities: savedProduct.rarities,
+          prices: parsedPrices,
+          stock: savedProduct.stock,
+          imageUrl: savedProduct.imageUrl,
+        };
+        if (isEdit) {
+          await updateProductInCloud(productId, cloudPayload);
+        } else {
+          await createProductInCloud(cloudPayload);
+        }
+      }
+
+      setManagedGame(savedProduct.game);
+      setIsFormVisible(false);
+      setForm(EMPTY_FORM(savedProduct.game));
+      setStatusMessage(
+        isCloudAdmin
+          ? isEdit
+            ? 'Товар обновлён в облачной базе и localStorage'
+            : 'Товар добавлен в облачную базу и localStorage'
+          : isEdit
+            ? 'Товар обновлён и сохранён в localStorage'
+            : 'Товар добавлен и сохранён в localStorage',
+      );
+    } catch {
+      setError('Товар сохранён локально, но не удалось синхронизировать с облаком');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleQuickStock = (product: Product, delta: number) => {
+  const handleQuickStock = async (product: Product, delta: number) => {
     const nextStock = Math.max(0, product.stock + delta);
     const nextList = products.map((p) =>
       p.id === product.id
         ? {...p, stock: nextStock, updatedAt: new Date().toISOString()}
         : p,
     );
-    persistUpdate(nextList, 'Наличие обновлено в localStorage');
+    try {
+      onCatalogUpdated(nextList);
+      if (isCloudAdmin) {
+        await updateStockInCloud(product.id, nextStock);
+      }
+      setStatusMessage('Наличие обновлено');
+    } catch {
+      setError('Не удалось обновить наличие');
+    }
   };
 
-  const handleDeleteProduct = (productId: string) => {
+  const handleDeleteProduct = async (productId: string) => {
     const nextList = products.filter((p) => p.id !== productId);
-    if (!persistUpdate(nextList, 'Товар удалён из локального каталога')) return;
-    setConfirmDeleteId(null);
-    if (form.id === productId) {
-      setIsFormVisible(false);
-      setForm(EMPTY_FORM(managedGame));
+    try {
+      onCatalogUpdated(nextList);
+      if (isCloudAdmin) {
+        await deleteProductInCloud(productId);
+      }
+      setConfirmDeleteId(null);
+      setStatusMessage('Товар удалён');
+      if (form.id === productId) {
+        setIsFormVisible(false);
+        setForm(EMPTY_FORM(managedGame));
+      }
+    } catch {
+      setError('Не удалось удалить товар');
     }
   };
 
@@ -312,7 +396,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
     downloadCatalogJson(products);
     setError('');
     setStatusMessage(
-      'Файл catalog.json скачан. Замените им data/catalog.json в проекте, чтобы обновить каталог для всех пользователей.',
+      'Файл catalog.json скачан. Замените им data/catalog.json и обновите деплой на Vercel, чтобы изменения увидели все пользователи.',
     );
   };
 
@@ -322,7 +406,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
     setForm(EMPTY_FORM(managedGame));
     setConfirmDeleteId(null);
     setError('');
-    setStatusMessage('Каталог сброшен к версии из data/catalog.json');
+    setStatusMessage('Локальные изменения сброшены к версии из data/catalog.json');
   };
 
   return (
@@ -340,7 +424,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
             exit={{opacity: 0}}
             transition={{duration: 0.2}}
             onClick={onClose}
-            className="fixed inset-0 bg-black/25 backdrop-blur-[1px]"
+            className="fixed inset-0 bg-black/30 backdrop-blur-[1px]"
           />
 
           <motion.aside
@@ -348,25 +432,25 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
             animate={{x: 0}}
             exit={{x: '100%'}}
             transition={{duration: 0.3, ease: [0.16, 1, 0.3, 1]}}
-            className="relative z-10 w-full max-w-2xl bg-white h-full flex flex-col border-l border-black/[0.08] shadow-2xl"
+            className="relative z-10 w-full max-w-2xl bg-white h-full flex flex-col border-l border-black/[0.08] shadow-2xl overflow-hidden"
           >
             {/* Header */}
-            <div className="px-6 py-5 border-b border-black/[0.06] flex items-start justify-between gap-4">
-              <div>
-                <h2 className="font-serif text-2xl font-semibold text-[#181617]">
+            <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-black/[0.06] flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="font-serif text-xl sm:text-2xl font-semibold text-[#181617]">
                   Панель администратора
                 </h2>
                 <p className="text-xs text-[#7D7478] mt-0.5 leading-relaxed">
-                  Изменения сохраняются в localStorage. Чтобы обновить сайт для всех, скачайте{' '}
-                  <span className="font-mono text-[#181617]">catalog.json</span> и замените{' '}
-                  <span className="font-mono text-[#181617]">data/catalog.json</span>.
+                  Изменения сохраняются в localStorage. Нажмите{' '}
+                  <span className="font-semibold text-[#181617]">«Скачать catalog.json»</span>, чтобы заменить{' '}
+                  <span className="font-mono text-[#181617]">data/catalog.json</span> для всех пользователей.
                 </p>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={onLogout}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#6E676B] hover:text-[#181617] border border-black/[0.08] rounded-lg hover:bg-[#FAF8F9] transition-colors"
+                  className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-medium text-[#6E676B] hover:text-[#181617] border border-black/[0.08] rounded-lg hover:bg-[#FAF8F9] transition-colors"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   <span>Выйти</span>
@@ -382,8 +466,8 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
               </div>
             </div>
 
-            {/* Export / Sync Bar */}
-            <div className="px-6 py-3 bg-[#FAF0F4]/65 border-b border-[#ECCAD6]/70 flex flex-wrap items-center justify-between gap-2.5">
+            {/* Export & Cloud Sync Bar */}
+            <div className="px-4 sm:px-6 py-3 bg-[#FAF0F4]/70 border-b border-[#ECCAD6]/75 flex flex-wrap items-center justify-between gap-2.5">
               <button
                 type="button"
                 onClick={handleDownloadCatalog}
@@ -393,25 +477,44 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                 <span>Скачать catalog.json</span>
               </button>
 
-              {hasLocalOverrides && (
-                <button
-                  type="button"
-                  onClick={handleResetToBundled}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#7D2443] bg-white border border-[#ECCAD6] rounded-xl hover:bg-[#FAF0F4] transition-colors whitespace-nowrap"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Сбросить к data/catalog.json</span>
-                </button>
-              )}
+              <div className="flex flex-wrap items-center gap-2">
+                {!isCloudAdmin ? (
+                  <button
+                    type="button"
+                    disabled={isConnectingCloud}
+                    onClick={handleConnectCloudSync}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#4B4448] bg-white border border-black/[0.1] rounded-xl hover:bg-[#FAF8F9] disabled:opacity-60 transition-colors whitespace-nowrap"
+                  >
+                    <Cloud className="w-3.5 h-3.5" />
+                    <span>{isConnectingCloud ? 'Подключение...' : 'Облако Firebase'}</span>
+                  </button>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-[#2E6F40] bg-[#ECF8EF] border border-[#BEE3C7] rounded-xl whitespace-nowrap">
+                    <Cloud className="w-3.5 h-3.5" />
+                    <span>Облако подключено</span>
+                  </span>
+                )}
+
+                {hasLocalOverrides && (
+                  <button
+                    type="button"
+                    onClick={handleResetToBundled}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#7D2443] bg-white border border-[#ECCAD6] rounded-xl hover:bg-[#FAF0F4] transition-colors whitespace-nowrap"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Сбросить</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Catalog Tabs + Add Button */}
-            <div className="px-6 py-4 bg-[#FAF8F9] border-b border-black/[0.06] flex flex-wrap items-center justify-between gap-3">
-              <div className="inline-flex items-center p-1 bg-white border border-black/[0.06] rounded-xl">
+            <div className="px-4 sm:px-6 py-3.5 sm:py-4 bg-[#FAF8F9] border-b border-black/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="inline-flex items-center p-1 bg-white border border-black/[0.06] rounded-xl self-start sm:self-auto">
                 <button
                   type="button"
                   onClick={() => handleSwitchManagedGame('adopt-me')}
-                  className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                  className={`px-3.5 sm:px-4 py-2 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
                     managedGame === 'adopt-me'
                       ? 'bg-[#181617] text-white'
                       : 'text-[#6E676B] hover:text-[#181617]'
@@ -422,7 +525,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                 <button
                   type="button"
                   onClick={() => handleSwitchManagedGame('mm2')}
-                  className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                  className={`px-3.5 sm:px-4 py-2 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
                     managedGame === 'mm2'
                       ? 'bg-[#181617] text-white'
                       : 'text-[#6E676B] hover:text-[#181617]'
@@ -435,7 +538,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
               <button
                 type="button"
                 onClick={openCreateForm}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-[#C85A7C] hover:bg-[#B44A6B] rounded-xl transition-colors whitespace-nowrap"
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 text-xs font-medium text-white bg-[#C85A7C] hover:bg-[#B44A6B] rounded-xl transition-colors whitespace-nowrap"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Добавить товар в {managedGame === 'adopt-me' ? 'Adopt Me' : 'MM2'}</span>
@@ -443,7 +546,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
             </div>
 
             {/* Main Scroll Body */}
-            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+            <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 space-y-6">
               {statusMessage && (
                 <div className="flex items-center justify-between gap-3 px-4 py-2.5 text-xs font-medium text-[#181617] bg-[#FAF0F4] border border-[#ECCAD6] rounded-xl">
                   <span className="inline-flex items-center gap-1.5">
@@ -470,7 +573,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
               {isFormVisible && (
                 <form
                   onSubmit={handleSaveProduct}
-                  className="bg-[#FAF8F9] border border-black/[0.08] rounded-2xl p-5 space-y-4"
+                  className="bg-[#FAF8F9] border border-black/[0.08] rounded-2xl p-4 sm:p-5 space-y-4"
                 >
                   <div className="flex items-center justify-between">
                     <h3 className="font-serif text-xl font-semibold text-[#181617]">
@@ -488,7 +591,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 sm:gap-4">
                     <div>
                       <label className="block text-xs font-medium text-[#4B4448] mb-1.5">
                         Каталог игры
@@ -516,7 +619,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                         type="text"
                         value={form.title}
                         onChange={(e) => setForm((prev) => ({...prev, title: e.target.value}))}
-                        placeholder="Например: Frost Dragon"
+                        placeholder="Например: Корова"
                         className="w-full px-3.5 py-2.5 text-sm bg-white border border-black/[0.09] rounded-xl text-[#181617] focus:outline-none focus:border-[#C85A7C]"
                       />
                     </div>
@@ -574,10 +677,10 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                     </div>
                   </div>
 
-                  {/* Adopt Me Rarity Picker (replaces description) vs MM2 optional subtitle */}
+                  {/* Adopt Me Rarity Picker vs MM2 optional subtitle */}
                   {form.game === 'adopt-me' ? (
                     <div>
-                      <div className="flex items-center justify-between mb-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                         <label className="block text-xs font-medium text-[#4B4448]">
                           Редкость товара (можно выбрать несколько)
                         </label>
@@ -662,7 +765,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                             className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-[#181617] bg-white border border-black/[0.1] rounded-lg hover:bg-[#F3F0F2] cursor-pointer transition-colors"
                           >
                             <Upload className="w-3.5 h-3.5" />
-                            <span>{isUploading ? 'Обработка...' : 'Выбрать фото'}</span>
+                            <span>{isUploading ? 'Обработка...' : 'Загрузить фото'}</span>
                           </label>
                           {form.imageUrl && (
                             <button
@@ -688,23 +791,27 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-end gap-2.5 pt-2">
+                  <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 pt-2">
                     <button
                       type="button"
                       onClick={() => {
                         setIsFormVisible(false);
                         setForm(EMPTY_FORM(managedGame));
                       }}
-                      className="px-4 py-2 text-xs font-medium text-[#4B4448] bg-white border border-black/[0.09] rounded-xl hover:bg-[#F3F0F2] transition-colors"
+                      className="px-4 py-2.5 sm:py-2 text-xs font-medium text-[#4B4448] bg-white border border-black/[0.09] rounded-xl hover:bg-[#F3F0F2] transition-colors"
                     >
                       Отмена
                     </button>
                     <button
                       type="submit"
-                      disabled={isUploading}
-                      className="px-5 py-2 text-xs font-medium text-white bg-[#181617] rounded-xl hover:bg-[#2E2A2C] disabled:opacity-60 transition-colors"
+                      disabled={isSaving || isUploading}
+                      className="px-5 py-2.5 sm:py-2 text-xs font-medium text-white bg-[#181617] rounded-xl hover:bg-[#2E2A2C] disabled:opacity-60 transition-colors"
                     >
-                      {form.id ? 'Сохранить изменения' : 'Добавить товар'}
+                      {isSaving
+                        ? 'Сохранение...'
+                        : form.id
+                          ? 'Сохранить изменения'
+                          : 'Добавить товар'}
                     </button>
                   </div>
                 </form>
@@ -745,8 +852,8 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                       const priceEntries = getAvailablePriceEntries(item);
 
                       return (
-                        <li key={item.id} className="p-4 flex flex-col sm:flex-row sm:items-center gap-4">
-                          <div className="flex items-center gap-3.5 flex-1 min-w-0">
+                        <li key={item.id} className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
                             {item.imageUrl && (
                               <div className="w-16 h-12 rounded-lg overflow-hidden bg-[#FAF8F9] border border-black/[0.05] shrink-0">
                                 <ProductImage
@@ -813,42 +920,44 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                               </button>
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() => openEditForm(item)}
-                              aria-label={`Редактировать ${item.title}`}
-                              className="p-2 text-[#6E676B] hover:text-[#181617] hover:bg-[#FAF8F9] rounded-lg transition-colors"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-
-                            {confirmDeleteId === item.id ? (
-                              <div className="inline-flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteProduct(item.id)}
-                                  className="px-2.5 py-1 text-[11px] font-medium text-white bg-[#9E3557] rounded-md hover:bg-[#842947]"
-                                >
-                                  Удалить
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmDeleteId(null)}
-                                  className="px-2 py-1 text-[11px] text-[#6E676B] hover:text-[#181617]"
-                                >
-                                  Отмена
-                                </button>
-                              </div>
-                            ) : (
+                            <div className="flex items-center gap-1">
                               <button
                                 type="button"
-                                onClick={() => setConfirmDeleteId(item.id)}
-                                aria-label={`Удалить ${item.title}`}
-                                className="p-2 text-[#6E676B] hover:text-[#9E3557] hover:bg-[#FAF0F4] rounded-lg transition-colors"
+                                onClick={() => openEditForm(item)}
+                                aria-label={`Редактировать ${item.title}`}
+                                className="p-2 text-[#6E676B] hover:text-[#181617] hover:bg-[#FAF8F9] rounded-lg transition-colors"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                <Pencil className="w-3.5 h-3.5" />
                               </button>
-                            )}
+
+                              {confirmDeleteId === item.id ? (
+                                <div className="inline-flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteProduct(item.id)}
+                                    className="px-2.5 py-1 text-[11px] font-medium text-white bg-[#9E3557] rounded-md hover:bg-[#842947]"
+                                  >
+                                    Удалить
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteId(null)}
+                                    className="px-2 py-1 text-[11px] text-[#6E676B] hover:text-[#181617]"
+                                  >
+                                    Отмена
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteId(item.id)}
+                                  aria-label={`Удалить ${item.title}`}
+                                  className="p-2 text-[#6E676B] hover:text-[#9E3557] hover:bg-[#FAF0F4] rounded-lg transition-colors"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </li>
                       );

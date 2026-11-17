@@ -1,0 +1,89 @@
+[
+  {
+    "id": "am-shadow-dragon",
+    "game": "adopt-me",
+    "title": "Shadow Dragon",
+    "rarities": ["F", "R"],
+    "prices": {
+      "UAH": 2150,
+      "STARS": 2750,
+      "ROBUX": 4000
+    },
+    "stock": 2,
+    "imageUrl": "",
+    "createdAt": "2026-11-17T00:00:00.000Z",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  {
+    "id": "am-strawberry-bat",
+    "game": "adopt-me",
+    "title": "Strawberry Shortcake Bat Dragon",
+    "rarities": ["R"],
+    "prices": {
+      "UAH": 550,
+      "STARS": 700,
+      "ROBUX": 1050
+    },
+    "stock": 5,
+    "imageUrl": "",
+    "createdAt": "2026-11-17T00:01:00.000Z",
+    "updatedAt": "2026-11-17T00:01:00.000Z"
+  },
+  {
+    "id": "am-frost-unicorn",
+    "game": "adopt-me",
+    "title": "Frost Unicorn",
+    "rarities": ["N", "F", "R"],
+    "prices": {
+      "UAH": 380,
+      "STARS": 490,
+      "ROBUX": 720
+    },
+    "stock": 7,
+    "imageUrl": "",
+    "createdAt": "2026-11-17T00:02:00.000Z",
+    "updatedAt": "2026-11-17T00:02:00.000Z"
+  },
+  {
+    "id": "mm2-crystal-blade",
+    "game": "mm2",
+    "title": "Crystal Prism Dagger",
+    "prices": {
+      "UAH": 640,
+      "STARS": 820,
+      "ROBUX": 1200
+    },
+    "stock": 4,
+    "imageUrl": "",
+    "createdAt": "2026-11-17T00:03:00.000Z",
+    "updatedAt": "2026-11-17T00:03:00.000Z"
+  },
+  {
+    "id": "mm2-icebreaker",
+    "game": "mm2",
+    "title": "Icebreaker Axe",
+    "prices": {
+      "UAH": 750,
+      "STARS": 960,
+      "ROBUX": 1400
+    },
+    "stock": 3,
+    "imageUrl": "",
+    "createdAt": "2026-11-17T00:04:00.000Z",
+    "updatedAt": "2026-11-17T00:04:00.000Z"
+  },
+  {
+    "id": "mm2-pearl-revolver",
+    "game": "mm2",
+    "title": "Rose Pearl Revolver",
+    "prices": {
+      "UAH": 510,
+      "STARS": 650,
+      "ROBUX": 950
+    },
+    "stock": 6,
+    "imageUrl": "",
+    "createdAt": "2026-11-17T00:05:00.000Z",
+    "updatedAt": "2026-11-17T00:05:00.000Z"
+  }
+]

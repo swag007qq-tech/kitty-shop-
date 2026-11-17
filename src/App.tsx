@@ -13,9 +13,7 @@ import {MusicPlayerButton} from './components/MusicPlayerButton';
 import {auth} from './firebase';
 import {
   checkIsAdminUser,
-  clearLocalCatalogOverrides,
-  loadLocalCatalogState,
-  saveLocalCatalogOverrides,
+  INITIAL_PRODUCTS,
   subscribeToCatalog,
 } from './utils/catalogCloud';
 
@@ -27,11 +25,8 @@ export default function App() {
   const [showIntro, setShowIntro] = useState(true);
   const [activeGame, setActiveGame] = useState<GameCategory | null>(null);
 
-  const [initialLocalState] = useState(() => loadLocalCatalogState());
-  const [products, setProducts] = useState<Product[]>(initialLocalState.products);
-  const [hasLocalOverrides, setHasLocalOverrides] = useState<boolean>(
-    initialLocalState.hasLocalOverrides,
-  );
+  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
 
   const [cart, setCart] = useState<CartItem[]>(() => {
     try {
@@ -68,7 +63,7 @@ export default function App() {
     }
   }, [currency]);
 
-  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
+  const [isPasswordVerified, setIsPasswordVerified] = useState<boolean>(() => {
     try {
       return sessionStorage.getItem(ADMIN_SESSION_KEY) === '1';
     } catch {
@@ -76,12 +71,13 @@ export default function App() {
     }
   });
   const [isCloudAdmin, setIsCloudAdmin] = useState(false);
+  const isAdmin = isPasswordVerified && isCloudAdmin;
 
   const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
   const [isAdminDrawerOpen, setIsAdminDrawerOpen] = useState(false);
   const [adminInitialGame, setAdminInitialGame] = useState<GameCategory>('adopt-me');
 
-  // Track optional Firebase Auth admin state
+  // Track Firebase Auth admin state across reloads
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       if (!user || !user.emailVerified) {
@@ -94,18 +90,21 @@ export default function App() {
     return () => unsubscribeAuth();
   }, []);
 
-  // Sync live Firestore updates when cloud catalog is initialized and no local edits override it
+  // Always subscribe to the shared cloud Firestore catalog across all devices
   useEffect(() => {
-    if (hasLocalOverrides) return;
-    const unsubscribeCatalog = subscribeToCatalog((liveProducts, isInitialized) => {
-      if (isInitialized) {
+    const unsubscribeCatalog = subscribeToCatalog(
+      (liveProducts) => {
         setProducts(liveProducts);
-      }
-    });
+        setIsLoadingProducts(false);
+      },
+      () => {
+        setIsLoadingProducts(false);
+      },
+    );
     return () => unsubscribeCatalog();
-  }, [hasLocalOverrides]);
+  }, []);
 
-  // Persist user's cart to localStorage
+  // Persist user's personal shopping cart
   useEffect(() => {
     try {
       localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
@@ -114,8 +113,9 @@ export default function App() {
     }
   }, [cart]);
 
-  // Keep cart synced with live stock & deleted products
+  // Keep cart synced with live cloud stock & deleted products
   useEffect(() => {
+    if (isLoadingProducts) return;
     setCart((prev) => {
       const next: CartItem[] = [];
       let changed = false;
@@ -137,7 +137,7 @@ export default function App() {
 
       return changed ? next : prev;
     });
-  }, [products]);
+  }, [products, isLoadingProducts]);
 
   const handleIntroComplete = useCallback(() => {
     setShowIntro(false);
@@ -192,7 +192,8 @@ export default function App() {
   };
 
   const handleAdminLoginSuccess = () => {
-    setIsAdmin(true);
+    setIsPasswordVerified(true);
+    setIsCloudAdmin(true);
     try {
       sessionStorage.setItem(ADMIN_SESSION_KEY, '1');
     } catch {
@@ -204,7 +205,7 @@ export default function App() {
   };
 
   const handleAdminLogout = async () => {
-    setIsAdmin(false);
+    setIsPasswordVerified(false);
     setIsCloudAdmin(false);
     try {
       sessionStorage.removeItem(ADMIN_SESSION_KEY);
@@ -217,18 +218,6 @@ export default function App() {
       // Ignore signout error
     }
     setIsAdminDrawerOpen(false);
-  };
-
-  const handleCatalogUpdated = (nextProducts: Product[]) => {
-    saveLocalCatalogOverrides(nextProducts);
-    setProducts(nextProducts);
-    setHasLocalOverrides(true);
-  };
-
-  const handleResetCatalog = () => {
-    const initial = clearLocalCatalogOverrides();
-    setProducts(initial);
-    setHasLocalOverrides(false);
   };
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -258,7 +247,7 @@ export default function App() {
             cart={cart}
             currency={currency}
             isAdmin={isAdmin}
-            isLoadingProducts={false}
+            isLoadingProducts={isLoadingProducts}
             onSelectGame={setActiveGame}
             onChangeCurrency={setCurrency}
             onAddToCart={handleAddToCart}
@@ -315,11 +304,6 @@ export default function App() {
         initialGame={adminInitialGame}
         currency={currency}
         products={products}
-        hasLocalOverrides={hasLocalOverrides}
-        isCloudAdmin={isCloudAdmin}
-        onCatalogUpdated={handleCatalogUpdated}
-        onResetCatalog={handleResetCatalog}
-        onCloudStatusChange={setIsCloudAdmin}
         onLogout={handleAdminLogout}
       />
 

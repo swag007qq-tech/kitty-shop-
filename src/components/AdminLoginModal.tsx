@@ -1,7 +1,13 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
 import {X, Eye, EyeOff, Lock} from 'lucide-react';
-import {ADMIN_PASSWORD} from '../utils/catalogCloud';
+import {signInWithPopup, signOut} from 'firebase/auth';
+import {auth, BOOTSTRAPPED_ADMIN_EMAIL, googleProvider} from '../firebase';
+import {
+  ADMIN_PASSWORD,
+  checkIsAdminUser,
+  ensureCloudCatalogSeeded,
+} from '../utils/catalogCloud';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -17,6 +23,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -38,7 +45,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isOpen, onClose]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!password.trim()) {
       setError('Введите пароль администратора');
@@ -50,7 +57,55 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
       return;
     }
 
-    onSuccess();
+    setIsSubmitting(true);
+    setError('');
+
+    try {
+      let currentUser = auth.currentUser;
+      const isAlreadyBootstrapped =
+        Boolean(currentUser?.emailVerified) &&
+        currentUser?.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase();
+
+      // Call signInWithPopup directly inside the user click gesture to avoid mobile popup blockers
+      if (!currentUser || !currentUser.emailVerified || !isAlreadyBootstrapped) {
+        const cred = await signInWithPopup(auth, googleProvider);
+        currentUser = cred.user;
+      }
+
+      const isAllowed = await checkIsAdminUser(currentUser.uid, currentUser.email);
+      if (!isAllowed || !currentUser.emailVerified) {
+        await signOut(auth);
+        setError(
+          `Этот Google-аккаунт не является администратором. Войдите через ${BOOTSTRAPPED_ADMIN_EMAIL}.`,
+        );
+        return;
+      }
+
+      await ensureCloudCatalogSeeded();
+      onSuccess();
+    } catch (err) {
+      const code =
+        err && typeof err === 'object' && 'code' in err
+          ? String((err as {code?: unknown}).code)
+          : '';
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        setError(
+          'Окно входа Google было закрыто. Подтвердите аккаунт владельца, чтобы изменения сохранялись на сервере.',
+        );
+      } else if (code === 'auth/popup-blocked') {
+        setError(
+          'Браузер заблокировал всплывающее окно Google. Разрешите всплывающие окна в настройках сайта.',
+        );
+      } else if (code === 'auth/unauthorized-domain') {
+        setError(
+          `Домен ${window.location.hostname} не добавлен в Firebase Auth (Authorized domains). Добавьте его в настройках Firebase Console.`,
+        );
+      } else {
+        setError('Не удалось подключиться к облачной базе. Проверьте интернет и повторите попытку.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -87,7 +142,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   Вход для администратора
                 </h2>
                 <p className="mt-1 text-xs text-[#6E676B] leading-relaxed">
-                  Введите пароль для управления каталогами Adopt Me и MM2.
+                  Введите пароль и подтвердите аккаунт владельца — все изменения сразу синхронизируются на всех устройствах.
                 </p>
               </div>
               <button
@@ -149,9 +204,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 px-4 text-xs font-medium text-white bg-[#181617] rounded-xl hover:bg-[#2E2A2C] transition-colors"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2.5 px-4 text-xs font-medium text-white bg-[#181617] rounded-xl hover:bg-[#2E2A2C] disabled:opacity-60 transition-colors"
                 >
-                  Войти
+                  {isSubmitting ? 'Подключение...' : 'Войти'}
                 </button>
               </div>
             </form>

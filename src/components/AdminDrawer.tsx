@@ -10,10 +10,8 @@ import {
   Minus,
   Check,
   Download,
-  RotateCcw,
   Cloud,
 } from 'lucide-react';
-import {signInWithPopup, signOut} from 'firebase/auth';
 import {
   AdoptMeRarity,
   CurrencyCode,
@@ -29,14 +27,10 @@ import {
   getProductPrice,
 } from '../utils/currency';
 import {ADOPT_ME_RARITIES, getRarityMeta, sortRarities} from '../utils/rarities';
-import {auth, BOOTSTRAPPED_ADMIN_EMAIL, googleProvider} from '../firebase';
 import {
-  checkIsAdminUser,
   createProductInCloud,
   deleteProductInCloud,
   downloadCatalogJson,
-  ensureCloudCatalogSeeded,
-  readImageAsDataUrl,
   updateProductInCloud,
   updateStockInCloud,
   uploadProductPhotoToCloud,
@@ -48,11 +42,6 @@ interface AdminDrawerProps {
   initialGame: GameCategory;
   currency: CurrencyCode;
   products: Product[];
-  hasLocalOverrides: boolean;
-  isCloudAdmin: boolean;
-  onCatalogUpdated: (nextProducts: Product[]) => void;
-  onResetCatalog: () => void;
-  onCloudStatusChange: (isConnected: boolean) => void;
   onLogout: () => void;
 }
 
@@ -89,11 +78,6 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
   onClose,
   initialGame,
   products,
-  hasLocalOverrides,
-  isCloudAdmin,
-  onCatalogUpdated,
-  onResetCatalog,
-  onCloudStatusChange,
   onLogout,
 }) => {
   const [managedGame, setManagedGame] = useState<GameCategory>(initialGame);
@@ -101,7 +85,6 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [isConnectingCloud, setIsConnectingCloud] = useState(false);
   const [error, setError] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -193,30 +176,6 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
     }));
   };
 
-  const handleConnectCloudSync = async () => {
-    setIsConnectingCloud(true);
-    setError('');
-    setStatusMessage('');
-    try {
-      const cred = await signInWithPopup(auth, googleProvider);
-      const allowed = await checkIsAdminUser(cred.user.uid, cred.user.email);
-      if (!allowed || !cred.user.emailVerified) {
-        await signOut(auth);
-        setError(
-          `Этот Google-аккаунт не имеет прав администратора (${BOOTSTRAPPED_ADMIN_EMAIL}).`,
-        );
-        return;
-      }
-      await ensureCloudCatalogSeeded(products);
-      onCloudStatusChange(true);
-      setStatusMessage('Облачная синхронизация Firebase подключена!');
-    } catch {
-      setError('Не удалось подключить облачную синхронизацию Firebase.');
-    } finally {
-      setIsConnectingCloud(false);
-    }
-  };
-
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -230,12 +189,14 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
     setError('');
 
     try {
-      const url = isCloudAdmin
-        ? await uploadProductPhotoToCloud(file)
-        : await readImageAsDataUrl(file);
-      setForm((prev) => ({...prev, imageUrl: url}));
+      const cloudUrl = await uploadProductPhotoToCloud(file);
+      setForm((prev) => ({...prev, imageUrl: cloudUrl}));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ошибка обработки изображения');
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Не удалось загрузить фотографию в облачное хранилище',
+      );
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) {
@@ -285,72 +246,33 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
 
     setIsSaving(true);
     try {
-      const now = new Date().toISOString();
-      const isEdit = Boolean(form.id);
-      const existing = isEdit ? products.find((p) => p.id === form.id) : undefined;
-      const productId =
-        existing?.id ||
-        `${form.game}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
-      const savedProduct: Product = {
-        id: productId,
+      const payload = {
         game: form.game,
         title: form.title.trim(),
-        subtitle: form.game === 'mm2' ? form.subtitle.trim() || undefined : undefined,
+        subtitle: form.game === 'mm2' ? form.subtitle.trim() : undefined,
         rarities: form.game === 'adopt-me' ? sortRarities(form.rarities) : undefined,
         prices: parsedPrices,
         stock: Math.floor(stockNum),
         imageUrl: form.imageUrl.trim(),
-        createdAt: existing?.createdAt || now,
-        updatedAt: now,
       };
 
-      const nextList = isEdit
-        ? products.map((p) => (p.id === savedProduct.id ? savedProduct : p))
-        : [savedProduct, ...products];
-
-      try {
-        onCatalogUpdated(nextList);
-      } catch {
-        setError(
-          'Не удалось сохранить в localStorage (превышен лимит памяти браузера — используйте ссылку на фото).',
-        );
-        setIsSaving(false);
-        return;
+      const isEdit = Boolean(form.id);
+      if (isEdit && form.id) {
+        await updateProductInCloud(form.id, payload);
+      } else {
+        await createProductInCloud(payload);
       }
 
-      if (isCloudAdmin) {
-        const cloudPayload = {
-          id: productId,
-          game: form.game,
-          title: savedProduct.title,
-          subtitle: savedProduct.subtitle,
-          rarities: savedProduct.rarities,
-          prices: parsedPrices,
-          stock: savedProduct.stock,
-          imageUrl: savedProduct.imageUrl,
-        };
-        if (isEdit) {
-          await updateProductInCloud(productId, cloudPayload);
-        } else {
-          await createProductInCloud(cloudPayload);
-        }
-      }
-
-      setManagedGame(savedProduct.game);
+      setManagedGame(form.game);
       setIsFormVisible(false);
-      setForm(EMPTY_FORM(savedProduct.game));
+      setForm(EMPTY_FORM(form.game));
       setStatusMessage(
-        isCloudAdmin
-          ? isEdit
-            ? 'Товар обновлён в облачной базе и localStorage'
-            : 'Товар добавлен в облачную базу и localStorage'
-          : isEdit
-            ? 'Товар обновлён и сохранён в localStorage'
-            : 'Товар добавлен и сохранён в localStorage',
+        isEdit
+          ? 'Товар обновлён в облачной базе и сразу виден всем посетителям'
+          : 'Товар добавлен в облачную базу и сразу виден всем посетителям',
       );
     } catch {
-      setError('Товар сохранён локально, но не удалось синхронизировать с облаком');
+      setError('Ошибка сохранения в облачную базу данных Firebase. Проверьте авторизацию.');
     } finally {
       setIsSaving(false);
     }
@@ -358,55 +280,32 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
 
   const handleQuickStock = async (product: Product, delta: number) => {
     const nextStock = Math.max(0, product.stock + delta);
-    const nextList = products.map((p) =>
-      p.id === product.id
-        ? {...p, stock: nextStock, updatedAt: new Date().toISOString()}
-        : p,
-    );
     try {
-      onCatalogUpdated(nextList);
-      if (isCloudAdmin) {
-        await updateStockInCloud(product.id, nextStock);
-      }
-      setStatusMessage('Наличие обновлено');
+      await updateStockInCloud(product.id, nextStock);
+      setStatusMessage('Наличие обновлено в облачной базе для всех устройств');
     } catch {
-      setError('Не удалось обновить наличие');
+      setError('Не удалось обновить наличие в облачной базе');
     }
   };
 
   const handleDeleteProduct = async (productId: string) => {
-    const nextList = products.filter((p) => p.id !== productId);
     try {
-      onCatalogUpdated(nextList);
-      if (isCloudAdmin) {
-        await deleteProductInCloud(productId);
-      }
+      await deleteProductInCloud(productId);
       setConfirmDeleteId(null);
-      setStatusMessage('Товар удалён');
+      setStatusMessage('Товар удалён из облачной базы');
       if (form.id === productId) {
         setIsFormVisible(false);
         setForm(EMPTY_FORM(managedGame));
       }
     } catch {
-      setError('Не удалось удалить товар');
+      setError('Не удалось удалить товар из облачной базы');
     }
   };
 
-  const handleDownloadCatalog = () => {
+  const handleDownloadBackup = () => {
     downloadCatalogJson(products);
     setError('');
-    setStatusMessage(
-      'Файл catalog.json скачан. Замените им data/catalog.json и обновите деплой на Vercel, чтобы изменения увидели все пользователи.',
-    );
-  };
-
-  const handleResetToBundled = () => {
-    onResetCatalog();
-    setIsFormVisible(false);
-    setForm(EMPTY_FORM(managedGame));
-    setConfirmDeleteId(null);
-    setError('');
-    setStatusMessage('Локальные изменения сброшены к версии из data/catalog.json');
+    setStatusMessage('Файл catalog.json скачан');
   };
 
   return (
@@ -437,13 +336,17 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
             {/* Header */}
             <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-black/[0.06] flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <h2 className="font-serif text-xl sm:text-2xl font-semibold text-[#181617]">
-                  Панель администратора
-                </h2>
-                <p className="text-xs text-[#7D7478] mt-0.5 leading-relaxed">
-                  Изменения сохраняются в localStorage. Нажмите{' '}
-                  <span className="font-semibold text-[#181617]">«Скачать catalog.json»</span>, чтобы заменить{' '}
-                  <span className="font-mono text-[#181617]">data/catalog.json</span> для всех пользователей.
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="font-serif text-xl sm:text-2xl font-semibold text-[#181617]">
+                    Панель администратора
+                  </h2>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-[#2E6F40] bg-[#ECF8EF] border border-[#BEE3C7] rounded-md">
+                    <Cloud className="w-3 h-3" />
+                    <span>Облако активно</span>
+                  </span>
+                </div>
+                <p className="text-xs text-[#7D7478] mt-1 leading-relaxed">
+                  Все товары, фотографии, цены и наличие хранятся в общей облачной базе и автоматически обновляются у всех пользователей на любых устройствах.
                 </p>
               </div>
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
@@ -466,49 +369,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
               </div>
             </div>
 
-            {/* Export & Cloud Sync Bar */}
-            <div className="px-4 sm:px-6 py-3 bg-[#FAF0F4]/70 border-b border-[#ECCAD6]/75 flex flex-wrap items-center justify-between gap-2.5">
-              <button
-                type="button"
-                onClick={handleDownloadCatalog}
-                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#181617] hover:bg-[#2E2A2C] rounded-xl transition-colors whitespace-nowrap"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Скачать catalog.json</span>
-              </button>
-
-              <div className="flex flex-wrap items-center gap-2">
-                {!isCloudAdmin ? (
-                  <button
-                    type="button"
-                    disabled={isConnectingCloud}
-                    onClick={handleConnectCloudSync}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#4B4448] bg-white border border-black/[0.1] rounded-xl hover:bg-[#FAF8F9] disabled:opacity-60 transition-colors whitespace-nowrap"
-                  >
-                    <Cloud className="w-3.5 h-3.5" />
-                    <span>{isConnectingCloud ? 'Подключение...' : 'Облако Firebase'}</span>
-                  </button>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-[#2E6F40] bg-[#ECF8EF] border border-[#BEE3C7] rounded-xl whitespace-nowrap">
-                    <Cloud className="w-3.5 h-3.5" />
-                    <span>Облако подключено</span>
-                  </span>
-                )}
-
-                {hasLocalOverrides && (
-                  <button
-                    type="button"
-                    onClick={handleResetToBundled}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#7D2443] bg-white border border-[#ECCAD6] rounded-xl hover:bg-[#FAF0F4] transition-colors whitespace-nowrap"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Сбросить</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Catalog Tabs + Add Button */}
+            {/* Catalog Tabs + Add Button + Backup */}
             <div className="px-4 sm:px-6 py-3.5 sm:py-4 bg-[#FAF8F9] border-b border-black/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="inline-flex items-center p-1 bg-white border border-black/[0.06] rounded-xl self-start sm:self-auto">
                 <button
@@ -535,14 +396,25 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={openCreateForm}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 text-xs font-medium text-white bg-[#C85A7C] hover:bg-[#B44A6B] rounded-xl transition-colors whitespace-nowrap"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Добавить товар в {managedGame === 'adopt-me' ? 'Adopt Me' : 'MM2'}</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openCreateForm}
+                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 text-xs font-medium text-white bg-[#C85A7C] hover:bg-[#B44A6B] rounded-xl transition-colors whitespace-nowrap"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Добавить товар в {managedGame === 'adopt-me' ? 'Adopt Me' : 'MM2'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadBackup}
+                  title="Скачать резервную копию catalog.json"
+                  className="inline-flex items-center gap-1.5 px-3 py-2.5 sm:py-2 text-xs font-medium text-[#4B4448] bg-white border border-black/[0.09] rounded-xl hover:bg-[#F3F0F2] transition-colors whitespace-nowrap"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Скачать catalog.json</span>
+                </button>
+              </div>
             </div>
 
             {/* Main Scroll Body */}
@@ -765,7 +637,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                             className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-[#181617] bg-white border border-black/[0.1] rounded-lg hover:bg-[#F3F0F2] cursor-pointer transition-colors"
                           >
                             <Upload className="w-3.5 h-3.5" />
-                            <span>{isUploading ? 'Обработка...' : 'Загрузить фото'}</span>
+                            <span>{isUploading ? 'Загрузка в облако...' : 'Загрузить фото'}</span>
                           </label>
                           {form.imageUrl && (
                             <button
@@ -808,7 +680,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                       className="px-5 py-2.5 sm:py-2 text-xs font-medium text-white bg-[#181617] rounded-xl hover:bg-[#2E2A2C] disabled:opacity-60 transition-colors"
                     >
                       {isSaving
-                        ? 'Сохранение...'
+                        ? 'Сохранение в облако...'
                         : form.id
                           ? 'Сохранить изменения'
                           : 'Добавить товар'}

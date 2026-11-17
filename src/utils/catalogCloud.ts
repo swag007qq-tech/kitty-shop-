@@ -4,6 +4,7 @@ import {
   deleteField,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -24,16 +25,8 @@ import {AdoptMeRarity, CurrencyCode, GameCategory, Product, ProductPrices} from 
 
 export const ADMIN_PASSWORD = 'Vamp2026';
 
-const CATALOG_OVERRIDES_KEY = 'kitty_shop_catalog_overrides_v1';
-const LEGACY_CACHE_KEY = 'kitty_shop_products_cache_v1';
-
 const VALID_RARITIES: AdoptMeRarity[] = ['M', 'N', 'F', 'R'];
 const VALID_CURRENCIES: CurrencyCode[] = ['UAH', 'STARS', 'ROBUX'];
-
-interface StoredCatalogOverrides {
-  baseHash: string;
-  products: Product[];
-}
 
 function sanitizeRarities(input: unknown): AdoptMeRarity[] {
   if (!Array.isArray(input)) return [];
@@ -90,7 +83,7 @@ export function normalizeProduct(raw: Record<string, unknown>, fallbackId?: stri
     rarities: game === 'adopt-me' ? sanitizeRarities(raw.rarities) : undefined,
     prices: sanitizePrices(raw.prices),
     stock: Math.min(100000, Math.max(0, Math.floor(Number(raw.stock) || 0))),
-    imageUrl: typeof raw.imageUrl === 'string' ? raw.imageUrl : '',
+    imageUrl: typeof raw.imageUrl === 'string' ? raw.imageUrl.slice(0, 2048) : '',
     createdAt: toIsoTimestamp(raw.createdAt),
     updatedAt: toIsoTimestamp(raw.updatedAt),
   };
@@ -103,66 +96,7 @@ function normalizeCatalog(input: unknown): Product[] {
     .map((item) => normalizeProduct(item));
 }
 
-function hashString(value: string): string {
-  let hash = 2166136261;
-  for (let i = 0; i < value.length; i++) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
 export const INITIAL_PRODUCTS: Product[] = normalizeCatalog(initialCatalogRaw);
-const INITIAL_CATALOG_HASH = hashString(JSON.stringify(INITIAL_PRODUCTS));
-
-export function loadLocalCatalogState(): {
-  products: Product[];
-  hasLocalOverrides: boolean;
-} {
-  try {
-    localStorage.removeItem(LEGACY_CACHE_KEY);
-    const raw = localStorage.getItem(CATALOG_OVERRIDES_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<StoredCatalogOverrides> | Product[];
-      if (
-        parsed &&
-        !Array.isArray(parsed) &&
-        parsed.baseHash === INITIAL_CATALOG_HASH &&
-        Array.isArray(parsed.products)
-      ) {
-        return {
-          products: normalizeCatalog(parsed.products),
-          hasLocalOverrides: true,
-        };
-      }
-      localStorage.removeItem(CATALOG_OVERRIDES_KEY);
-    }
-  } catch {
-    // Ignore storage read errors
-  }
-
-  return {
-    products: INITIAL_PRODUCTS,
-    hasLocalOverrides: false,
-  };
-}
-
-export function saveLocalCatalogOverrides(products: Product[]): void {
-  const payload: StoredCatalogOverrides = {
-    baseHash: INITIAL_CATALOG_HASH,
-    products: normalizeCatalog(products),
-  };
-  localStorage.setItem(CATALOG_OVERRIDES_KEY, JSON.stringify(payload));
-}
-
-export function clearLocalCatalogOverrides(): Product[] {
-  try {
-    localStorage.removeItem(CATALOG_OVERRIDES_KEY);
-  } catch {
-    // Ignore storage error
-  }
-  return INITIAL_PRODUCTS;
-}
 
 export function subscribeToCatalog(
   onUpdate: (products: Product[], isInitialized: boolean) => void,
@@ -175,7 +109,10 @@ export function subscribeToCatalog(
 
   const emit = () => {
     if (!hasProductsSnapshot || !hasMetaSnapshot) return;
-    if (!isMetaInitialized) return;
+    if (!isMetaInitialized && cloudProducts.length === 0) {
+      onUpdate(INITIAL_PRODUCTS, false);
+      return;
+    }
     const sorted = [...cloudProducts].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
@@ -192,8 +129,12 @@ export function subscribeToCatalog(
       emit();
     },
     (error) => {
-      if (onError && error instanceof Error) {
-        onError(error);
+      try {
+        handleFirestoreError(error, OperationType.LIST, 'products');
+      } catch (wrapped) {
+        if (onError && wrapped instanceof Error) {
+          onError(wrapped);
+        }
       }
     },
   );
@@ -206,8 +147,12 @@ export function subscribeToCatalog(
       emit();
     },
     (error) => {
-      if (onError && error instanceof Error) {
-        onError(error);
+      try {
+        handleFirestoreError(error, OperationType.GET, 'catalog_meta/state');
+      } catch (wrapped) {
+        if (onError && wrapped instanceof Error) {
+          onError(wrapped);
+        }
       }
     },
   );
@@ -230,7 +175,7 @@ export async function checkIsAdminUser(uid: string, email?: string | null): Prom
   }
 }
 
-export async function ensureCloudCatalogSeeded(seedList: Product[] = INITIAL_PRODUCTS): Promise<void> {
+export async function ensureCloudCatalogSeeded(): Promise<void> {
   const metaRef = doc(db, 'catalog_meta', 'state');
   try {
     const metaSnap = await getDoc(metaRef);
@@ -238,25 +183,31 @@ export async function ensureCloudCatalogSeeded(seedList: Product[] = INITIAL_PRO
       return;
     }
 
+    const existingSnap = await getDocs(collection(db, 'products'));
+    const existingIds = new Set(existingSnap.docs.map((d) => d.id));
+
     const batch = writeBatch(db);
-    for (const item of seedList) {
-      const safeId = item.id.replace(/[^a-zA-Z0-9_-]/g, '-');
-      const docData: Record<string, unknown> = {
-        id: safeId,
-        game: item.game,
-        title: item.title,
-        prices: item.prices,
-        stock: item.stock,
-        imageUrl: (item.imageUrl || '').slice(0, 2048),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-      if (item.game === 'adopt-me') {
-        docData.rarities = item.rarities && item.rarities.length > 0 ? item.rarities : ['R'];
-      } else if (item.subtitle) {
-        docData.subtitle = item.subtitle;
+    if (existingSnap.empty) {
+      for (const item of INITIAL_PRODUCTS) {
+        const safeId = item.id.replace(/[^a-zA-Z0-9_-]/g, '-');
+        if (existingIds.has(safeId)) continue;
+        const docData: Record<string, unknown> = {
+          id: safeId,
+          game: item.game,
+          title: item.title,
+          prices: item.prices,
+          stock: item.stock,
+          imageUrl: (item.imageUrl || '').slice(0, 2048),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
+        if (item.game === 'adopt-me') {
+          docData.rarities = item.rarities && item.rarities.length > 0 ? item.rarities : ['R'];
+        } else if (item.subtitle) {
+          docData.subtitle = item.subtitle;
+        }
+        batch.set(doc(db, 'products', safeId), docData);
       }
-      batch.set(doc(db, 'products', safeId), docData);
     }
     batch.set(metaRef, {
       initialized: true,
@@ -269,7 +220,7 @@ export async function ensureCloudCatalogSeeded(seedList: Product[] = INITIAL_PRO
 }
 
 export interface SaveProductInput {
-  id: string;
+  id?: string | null;
   game: GameCategory;
   title: string;
   subtitle?: string;
@@ -279,11 +230,13 @@ export interface SaveProductInput {
   imageUrl: string;
 }
 
-export async function createProductInCloud(input: SaveProductInput): Promise<void> {
+export async function createProductInCloud(input: SaveProductInput): Promise<string> {
   await ensureCloudCatalogSeeded();
-  const path = `products/${input.id}`;
+  const id =
+    input.id || `${input.game}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const path = `products/${id}`;
   const docData: Record<string, unknown> = {
-    id: input.id,
+    id,
     game: input.game,
     title: input.title.trim().slice(0, 140),
     prices: sanitizePrices(input.prices),
@@ -300,7 +253,8 @@ export async function createProductInCloud(input: SaveProductInput): Promise<voi
   }
 
   try {
-    await setDoc(doc(db, 'products', input.id), docData);
+    await setDoc(doc(db, 'products', id), docData);
+    return id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
   }
@@ -421,28 +375,24 @@ function compressImage(
   });
 }
 
-export async function readImageAsDataUrl(file: File): Promise<string> {
-  const prepared = await compressImage(file, 720, 0.82);
-  return prepared.dataUrl;
-}
-
 export async function uploadProductPhotoToCloud(file: File): Promise<string> {
   const imageId = `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const prepared = await compressImage(file, 960, 0.85);
   const ext = prepared.mimeType === 'image/webp' ? 'webp' : 'jpg';
 
+  // Primary: Firebase Cloud Storage
   try {
     const storageRef = ref(storage, `products/${imageId}.${ext}`);
     const uploadPromise = uploadBytes(storageRef, prepared.blob, {
       contentType: prepared.mimeType,
     });
     const timeoutPromise = new Promise<never>((_, reject) =>
-      window.setTimeout(() => reject(new Error('storage-timeout')), 6000),
+      window.setTimeout(() => reject(new Error('storage-timeout')), 3500),
     );
     await Promise.race([uploadPromise, timeoutPromise]);
     return await getDownloadURL(storageRef);
   } catch {
-    // Fallback to Firestore product_images collection
+    // Fallback: Firestore cloud product_images collection
   }
 
   let fallbackPayload = prepared;

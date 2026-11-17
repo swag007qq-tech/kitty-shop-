@@ -2,10 +2,12 @@ import React, {useEffect, useRef, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
 import {X, Eye, EyeOff, Lock} from 'lucide-react';
 
+import {ADMIN_PASSWORD} from '../utils/catalogStorage';
+
 interface AdminLoginModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: (password: string) => void;
+  onSuccess: () => void;
 }
 
 export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
@@ -16,7 +18,6 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -38,33 +39,19 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isOpen, onClose]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!password.trim()) {
       setError('Введите пароль администратора');
       return;
     }
 
-    setIsSubmitting(true);
-    setError('');
-
-    try {
-      const response = await fetch('/api/admin/login', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({password}),
-      });
-      if (!response.ok) {
-        setError('Неверный пароль. Попробуйте снова.');
-        setIsSubmitting(false);
-        return;
-      }
-      onSuccess(password);
-    } catch {
-      setError('Не удалось проверить пароль. Проверьте соединение.');
-    } finally {
-      setIsSubmitting(false);
+    if (password !== ADMIN_PASSWORD) {
+      setError('Неверный пароль. Попробуйте снова.');
+      return;
     }
+
+    onSuccess();
   };
 
   return (
@@ -163,10 +150,9 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 py-2.5 px-4 text-xs font-medium text-white bg-[#181617] rounded-xl hover:bg-[#2E2A2C] disabled:opacity-60 transition-colors"
+                  className="flex-1 py-2.5 px-4 text-xs font-medium text-white bg-[#181617] rounded-xl hover:bg-[#2E2A2C] transition-colors"
                 >
-                  {isSubmitting ? 'Проверка...' : 'Войти'}
+                  Войти
                 </button>
               </div>
             </form>

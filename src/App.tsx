@@ -9,29 +9,25 @@ import {CartDrawer} from './components/CartDrawer';
 import {AdminLoginModal} from './components/AdminLoginModal';
 import {AdminDrawer} from './components/AdminDrawer';
 import {MusicPlayerButton} from './components/MusicPlayerButton';
+import {
+  clearCatalogOverrides,
+  loadCatalogState,
+  saveCatalogOverrides,
+} from './utils/catalogStorage';
 
 const CART_STORAGE_KEY = 'kitty_shop_cart_v1';
-const PRODUCTS_CACHE_KEY = 'kitty_shop_products_cache_v1';
-const ADMIN_SESSION_KEY = 'kitty_shop_admin_pw_v1';
+const ADMIN_SESSION_KEY = 'kitty_shop_admin_auth_v1';
 const CURRENCY_STORAGE_KEY = 'kitty_shop_currency_v1';
 
 export default function App() {
   const [showIntro, setShowIntro] = useState(true);
   const [activeGame, setActiveGame] = useState<GameCategory | null>(null);
 
-  const [products, setProducts] = useState<Product[]>(() => {
-    try {
-      const cached = localStorage.getItem(PRODUCTS_CACHE_KEY);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch {
-      // Ignore cache error
-    }
-    return [];
-  });
-  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+  const [initialCatalogState] = useState(() => loadCatalogState());
+  const [products, setProducts] = useState<Product[]>(initialCatalogState.products);
+  const [hasLocalOverrides, setHasLocalOverrides] = useState<boolean>(
+    initialCatalogState.hasLocalOverrides,
+  );
 
   const [cart, setCart] = useState<CartItem[]>(() => {
     try {
@@ -68,42 +64,17 @@ export default function App() {
     }
   }, [currency]);
 
-  const [adminPassword, setAdminPassword] = useState<string>(() => {
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
     try {
-      return sessionStorage.getItem(ADMIN_SESSION_KEY) || '';
+      return sessionStorage.getItem(ADMIN_SESSION_KEY) === '1';
     } catch {
-      return '';
+      return false;
     }
   });
-  const isAdmin = Boolean(adminPassword);
 
   const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
   const [isAdminDrawerOpen, setIsAdminDrawerOpen] = useState(false);
   const [adminInitialGame, setAdminInitialGame] = useState<GameCategory>('adopt-me');
-
-  const fetchProducts = useCallback(async () => {
-    try {
-      const response = await fetch('/api/products', {cache: 'no-store'});
-      if (!response.ok) return;
-      const data = await response.json();
-      if (Array.isArray(data.products)) {
-        setProducts(data.products);
-        try {
-          localStorage.setItem(PRODUCTS_CACHE_KEY, JSON.stringify(data.products));
-        } catch {
-          // Ignore quota error
-        }
-      }
-    } catch {
-      // Keep cached products if offline
-    } finally {
-      setIsLoadingProducts(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchProducts();
-  }, [fetchProducts]);
 
   // Persist cart to localStorage
   useEffect(() => {
@@ -116,7 +87,6 @@ export default function App() {
 
   // Keep cart synced with live stock & deleted products
   useEffect(() => {
-    if (products.length === 0 && isLoadingProducts) return;
     setCart((prev) => {
       const next: CartItem[] = [];
       let changed = false;
@@ -138,7 +108,7 @@ export default function App() {
 
       return changed ? next : prev;
     });
-  }, [products, isLoadingProducts]);
+  }, [products]);
 
   const handleIntroComplete = useCallback(() => {
     setShowIntro(false);
@@ -192,10 +162,10 @@ export default function App() {
     setIsAdminDrawerOpen(true);
   };
 
-  const handleAdminLoginSuccess = (password: string) => {
-    setAdminPassword(password);
+  const handleAdminLoginSuccess = () => {
+    setIsAdmin(true);
     try {
-      sessionStorage.setItem(ADMIN_SESSION_KEY, password);
+      sessionStorage.setItem(ADMIN_SESSION_KEY, '1');
     } catch {
       // Ignore storage error
     }
@@ -205,7 +175,7 @@ export default function App() {
   };
 
   const handleAdminLogout = () => {
-    setAdminPassword('');
+    setIsAdmin(false);
     try {
       sessionStorage.removeItem(ADMIN_SESSION_KEY);
     } catch {
@@ -215,12 +185,15 @@ export default function App() {
   };
 
   const handleCatalogUpdated = (nextProducts: Product[]) => {
+    saveCatalogOverrides(nextProducts);
     setProducts(nextProducts);
-    try {
-      localStorage.setItem(PRODUCTS_CACHE_KEY, JSON.stringify(nextProducts));
-    } catch {
-      // Ignore quota error
-    }
+    setHasLocalOverrides(true);
+  };
+
+  const handleResetCatalog = () => {
+    const initial = clearCatalogOverrides();
+    setProducts(initial);
+    setHasLocalOverrides(false);
   };
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -303,11 +276,12 @@ export default function App() {
       <AdminDrawer
         isOpen={isAdminDrawerOpen}
         onClose={() => setIsAdminDrawerOpen(false)}
-        adminPassword={adminPassword}
         initialGame={adminInitialGame}
         currency={currency}
         products={products}
+        hasLocalOverrides={hasLocalOverrides}
         onCatalogUpdated={handleCatalogUpdated}
+        onResetCatalog={handleResetCatalog}
         onLogout={handleAdminLogout}
       />
 

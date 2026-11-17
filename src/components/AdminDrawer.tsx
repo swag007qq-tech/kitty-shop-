@@ -9,6 +9,8 @@ import {
   LogOut,
   Minus,
   Check,
+  Download,
+  RotateCcw,
 } from 'lucide-react';
 import {
   AdoptMeRarity,
@@ -25,15 +27,20 @@ import {
   getProductPrice,
 } from '../utils/currency';
 import {ADOPT_ME_RARITIES, getRarityMeta, sortRarities} from '../utils/rarities';
+import {
+  downloadCatalogJson,
+  readImageAsDataUrl,
+} from '../utils/catalogStorage';
 
 interface AdminDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  adminPassword: string;
   initialGame: GameCategory;
   currency: CurrencyCode;
   products: Product[];
+  hasLocalOverrides: boolean;
   onCatalogUpdated: (nextProducts: Product[]) => void;
+  onResetCatalog: () => void;
   onLogout: () => void;
 }
 
@@ -68,17 +75,17 @@ const EMPTY_FORM = (game: GameCategory): FormState => ({
 export const AdminDrawer: React.FC<AdminDrawerProps> = ({
   isOpen,
   onClose,
-  adminPassword,
   initialGame,
   products,
+  hasLocalOverrides,
   onCatalogUpdated,
+  onResetCatalog,
   onLogout,
 }) => {
   const [managedGame, setManagedGame] = useState<GameCategory>(initialGame);
   const [form, setForm] = useState<FormState>(() => EMPTY_FORM(initialGame));
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -182,41 +189,31 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
     setIsUploading(true);
     setError('');
 
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const dataUrl = String(reader.result || '');
-        const response = await fetch('/api/upload', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-admin-password': adminPassword,
-          },
-          body: JSON.stringify({dataUrl, filename: file.name}),
-        });
-        const data = await response.json();
-        if (!response.ok || !data.url) {
-          setError(data.error || 'Не удалось загрузить фотографию');
-        } else {
-          setForm((prev) => ({...prev, imageUrl: data.url}));
-        }
-      } catch {
-        setError('Ошибка загрузки изображения');
-      } finally {
-        setIsUploading(false);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
-      }
-    };
-    reader.onerror = () => {
-      setError('Не удалось прочитать файл');
+    try {
+      const dataUrl = await readImageAsDataUrl(file);
+      setForm((prev) => ({...prev, imageUrl: dataUrl}));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка обработки изображения');
+    } finally {
       setIsUploading(false);
-    };
-    reader.readAsDataURL(file);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
   };
 
-  const handleSaveProduct = async (e: React.FormEvent) => {
+  const persistUpdate = (nextList: Product[], message: string) => {
+    try {
+      onCatalogUpdated(nextList);
+      setStatusMessage(message);
+      return true;
+    } catch {
+      setError('Не удалось сохранить в localStorage (превышен лимит памяти браузера — используйте ссылку вместо большого фото).');
+      return false;
+    }
+  };
+
+  const handleSaveProduct = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setStatusMessage('');
@@ -255,95 +252,77 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
       return;
     }
 
-    setIsSaving(true);
-    try {
-      const payload = {
-        game: form.game,
-        title: form.title.trim(),
-        subtitle: form.game === 'mm2' ? form.subtitle.trim() : '',
-        rarities: form.game === 'adopt-me' ? sortRarities(form.rarities) : [],
-        prices: parsedPrices,
-        stock: Math.floor(stockNum),
-        imageUrl: form.imageUrl.trim(),
-      };
+    const now = new Date().toISOString();
+    const isEdit = Boolean(form.id);
+    const existing = isEdit ? products.find((p) => p.id === form.id) : undefined;
 
-      const isEdit = Boolean(form.id);
-      const url = isEdit ? `/api/products/${form.id}` : '/api/products';
-      const method = isEdit ? 'PUT' : 'POST';
+    const savedProduct: Product = {
+      id:
+        existing?.id ||
+        `${form.game}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      game: form.game,
+      title: form.title.trim(),
+      subtitle: form.game === 'mm2' ? form.subtitle.trim() || undefined : undefined,
+      rarities: form.game === 'adopt-me' ? sortRarities(form.rarities) : undefined,
+      prices: parsedPrices,
+      stock: Math.floor(stockNum),
+      imageUrl: form.imageUrl.trim(),
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+    };
 
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-password': adminPassword,
-        },
-        body: JSON.stringify(payload),
-      });
+    const nextList = isEdit
+      ? products.map((p) => (p.id === savedProduct.id ? savedProduct : p))
+      : [savedProduct, ...products];
 
-      const data = await response.json();
-      if (!response.ok || !data.product) {
-        setError(data.error || 'Не удалось сохранить товар');
-        setIsSaving(false);
-        return;
-      }
+    const saved = persistUpdate(
+      nextList,
+      isEdit
+        ? 'Товар обновлён и сохранён в localStorage'
+        : 'Товар добавлен и сохранён в localStorage',
+    );
+    if (!saved) return;
 
-      const savedProduct: Product = data.product;
-      const nextList = isEdit
-        ? products.map((p) => (p.id === savedProduct.id ? savedProduct : p))
-        : [savedProduct, ...products];
-
-      onCatalogUpdated(nextList);
-      setManagedGame(savedProduct.game);
-      setIsFormVisible(false);
-      setForm(EMPTY_FORM(savedProduct.game));
-      setStatusMessage(isEdit ? 'Товар обновлён и виден посетителям' : 'Товар добавлен в каталог');
-    } catch {
-      setError('Ошибка сети при сохранении');
-    } finally {
-      setIsSaving(false);
-    }
+    setManagedGame(savedProduct.game);
+    setIsFormVisible(false);
+    setForm(EMPTY_FORM(savedProduct.game));
   };
 
-  const handleQuickStock = async (product: Product, delta: number) => {
+  const handleQuickStock = (product: Product, delta: number) => {
     const nextStock = Math.max(0, product.stock + delta);
-    try {
-      const response = await fetch(`/api/products/${product.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-password': adminPassword,
-        },
-        body: JSON.stringify({stock: nextStock}),
-      });
-      const data = await response.json();
-      if (response.ok && data.product) {
-        onCatalogUpdated(products.map((p) => (p.id === product.id ? data.product : p)));
-      }
-    } catch {
-      setError('Не удалось обновить наличие');
+    const nextList = products.map((p) =>
+      p.id === product.id
+        ? {...p, stock: nextStock, updatedAt: new Date().toISOString()}
+        : p,
+    );
+    persistUpdate(nextList, 'Наличие обновлено в localStorage');
+  };
+
+  const handleDeleteProduct = (productId: string) => {
+    const nextList = products.filter((p) => p.id !== productId);
+    if (!persistUpdate(nextList, 'Товар удалён из локального каталога')) return;
+    setConfirmDeleteId(null);
+    if (form.id === productId) {
+      setIsFormVisible(false);
+      setForm(EMPTY_FORM(managedGame));
     }
   };
 
-  const handleDeleteProduct = async (productId: string) => {
-    try {
-      const response = await fetch(`/api/products/${productId}`, {
-        method: 'DELETE',
-        headers: {'x-admin-password': adminPassword},
-      });
-      if (response.ok) {
-        onCatalogUpdated(products.filter((p) => p.id !== productId));
-        setConfirmDeleteId(null);
-        setStatusMessage('Товар удалён');
-        if (form.id === productId) {
-          setIsFormVisible(false);
-          setForm(EMPTY_FORM(managedGame));
-        }
-      } else {
-        setError('Не удалось удалить товар');
-      }
-    } catch {
-      setError('Ошибка при удалении товара');
-    }
+  const handleDownloadCatalog = () => {
+    downloadCatalogJson(products);
+    setError('');
+    setStatusMessage(
+      'Файл catalog.json скачан. Замените им data/catalog.json в проекте, чтобы обновить каталог для всех пользователей.',
+    );
+  };
+
+  const handleResetToBundled = () => {
+    onResetCatalog();
+    setIsFormVisible(false);
+    setForm(EMPTY_FORM(managedGame));
+    setConfirmDeleteId(null);
+    setError('');
+    setStatusMessage('Каталог сброшен к версии из data/catalog.json');
   };
 
   return (
@@ -372,16 +351,18 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
             className="relative z-10 w-full max-w-2xl bg-white h-full flex flex-col border-l border-black/[0.08] shadow-2xl"
           >
             {/* Header */}
-            <div className="px-6 py-5 border-b border-black/[0.06] flex items-center justify-between gap-4">
+            <div className="px-6 py-5 border-b border-black/[0.06] flex items-start justify-between gap-4">
               <div>
                 <h2 className="font-serif text-2xl font-semibold text-[#181617]">
                   Панель администратора
                 </h2>
-                <p className="text-xs text-[#7D7478] mt-0.5">
-                  Все изменения сразу сохраняются и отображаются у посетителей.
+                <p className="text-xs text-[#7D7478] mt-0.5 leading-relaxed">
+                  Изменения сохраняются в localStorage. Чтобы обновить сайт для всех, скачайте{' '}
+                  <span className="font-mono text-[#181617]">catalog.json</span> и замените{' '}
+                  <span className="font-mono text-[#181617]">data/catalog.json</span>.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={onLogout}
@@ -399,6 +380,29 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                   <X className="w-4 h-4" />
                 </button>
               </div>
+            </div>
+
+            {/* Export / Sync Bar */}
+            <div className="px-6 py-3 bg-[#FAF0F4]/65 border-b border-[#ECCAD6]/70 flex flex-wrap items-center justify-between gap-2.5">
+              <button
+                type="button"
+                onClick={handleDownloadCatalog}
+                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#181617] hover:bg-[#2E2A2C] rounded-xl transition-colors whitespace-nowrap"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Скачать catalog.json</span>
+              </button>
+
+              {hasLocalOverrides && (
+                <button
+                  type="button"
+                  onClick={handleResetToBundled}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#7D2443] bg-white border border-[#ECCAD6] rounded-xl hover:bg-[#FAF0F4] transition-colors whitespace-nowrap"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Сбросить к data/catalog.json</span>
+                </button>
+              )}
             </div>
 
             {/* Catalog Tabs + Add Button */}
@@ -441,15 +445,15 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
             {/* Main Scroll Body */}
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
               {statusMessage && (
-                <div className="flex items-center justify-between px-4 py-2.5 text-xs font-medium text-[#181617] bg-[#FAF0F4] border border-[#ECCAD6] rounded-xl">
+                <div className="flex items-center justify-between gap-3 px-4 py-2.5 text-xs font-medium text-[#181617] bg-[#FAF0F4] border border-[#ECCAD6] rounded-xl">
                   <span className="inline-flex items-center gap-1.5">
-                    <Check className="w-3.5 h-3.5 text-[#9E3557]" />
-                    {statusMessage}
+                    <Check className="w-3.5 h-3.5 text-[#9E3557] shrink-0" />
+                    <span>{statusMessage}</span>
                   </span>
                   <button
                     type="button"
                     onClick={() => setStatusMessage('')}
-                    className="text-[#7D7478] hover:text-[#181617]"
+                    className="text-[#7D7478] hover:text-[#181617] shrink-0"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -658,7 +662,7 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                             className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-[#181617] bg-white border border-black/[0.1] rounded-lg hover:bg-[#F3F0F2] cursor-pointer transition-colors"
                           >
                             <Upload className="w-3.5 h-3.5" />
-                            <span>{isUploading ? 'Загрузка...' : 'Загрузить фото'}</span>
+                            <span>{isUploading ? 'Обработка...' : 'Выбрать фото'}</span>
                           </label>
                           {form.imageUrl && (
                             <button
@@ -697,10 +701,10 @@ export const AdminDrawer: React.FC<AdminDrawerProps> = ({
                     </button>
                     <button
                       type="submit"
-                      disabled={isSaving || isUploading}
+                      disabled={isUploading}
                       className="px-5 py-2 text-xs font-medium text-white bg-[#181617] rounded-xl hover:bg-[#2E2A2C] disabled:opacity-60 transition-colors"
                     >
-                      {isSaving ? 'Сохранение...' : form.id ? 'Сохранить изменения' : 'Добавить товар'}
+                      {form.id ? 'Сохранить изменения' : 'Добавить товар'}
                     </button>
                   </div>
                 </form>

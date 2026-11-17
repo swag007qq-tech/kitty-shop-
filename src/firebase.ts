@@ -16,7 +16,7 @@ export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({prompt: 'select_account'});
 
-export const BOOTSTRAPPED_ADMIN_EMAIL = 'swag007qq@gmail.com';
+export const BOOTSTRAPPED_ADMIN_EMAIL = 'kseniya.polishchuk33@gmail.com';
 
 export enum OperationType {
   CREATE = 'create',

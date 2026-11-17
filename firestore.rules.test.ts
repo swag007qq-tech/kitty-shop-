@@ -18,7 +18,7 @@ export const DIRTY_DOZEN_PAYLOADS = [
   {
     name: 'Unverified admin email spoof on /products/cow-1',
     path: 'products/cow-1',
-    auth: {uid: 'spoof', email: 'swag007qq@gmail.com', email_verified: false},
+    auth: {uid: 'spoof', email: 'kseniya.polishchuk33@gmail.com', email_verified: false},
     expected: 'PERMISSION_DENIED',
   },
   {
